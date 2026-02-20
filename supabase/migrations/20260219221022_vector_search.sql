@@ -96,6 +96,8 @@ BEGIN
             'Run: SELECT vault.create_secret(''sk-…'', ''OPENAI_API_KEY'');';
     END IF;
 
+    PERFORM http_set_curlopt('CURLOPT_TIMEOUT_MS', '30000');
+
     SELECT * INTO v_response
     FROM http((
         'POST',
@@ -122,7 +124,8 @@ $$;
 
 COMMENT ON FUNCTION openai_embed(TEXT) IS
     'Synchronously call OpenAI text-embedding-3-small via pgsql-http and return '
-    'a vector(1536).  Reads API key from vault secret named OPENAI_API_KEY.';
+    'a vector(1536).  Reads API key from vault secret named OPENAI_API_KEY. '
+    'HTTP timeout is 30 seconds.';
 
 
 -- ── chunk_full_summary — paragraph splitter ──────────────────────────────────
@@ -216,6 +219,7 @@ BEGIN
             SELECT id, text
             FROM   utterances
             WHERE  meeting_id = p_meeting_id
+              AND  embedding IS NULL
         LOOP
             UPDATE utterances
             SET    embedding = openai_embed(v_utterance.text)
@@ -233,7 +237,8 @@ END;
 $$;
 
 COMMENT ON FUNCTION embed_utterances(TEXT) IS
-    'Generate embeddings for every utterance in a meeting.';
+    'Generate embeddings for every utterance in a meeting that does not yet '
+    'have an embedding. Resumable: safe to call multiple times.';
 
 
 -- ── embed_all_meetings — batch helper ────────────────────────────────────────
