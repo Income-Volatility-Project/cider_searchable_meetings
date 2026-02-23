@@ -12,9 +12,9 @@
 # creation_time is ignored (not in schema)
 # =============================================================================
 
-# Configuration - UPDATE THESE VALUES
-SUPABASE_PROJECT_URL="http://localhost:54321"
-SUPABASE_API_KEY="sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+# Configuration — read from env vars, with local-dev defaults
+SUPABASE_PROJECT_URL="${SUPABASE_URL:-http://localhost:54321}"
+SUPABASE_API_KEY="${SUPABASE_KEY:-sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH}"
 
 API_ENDPOINT="${SUPABASE_PROJECT_URL}/rest/v1/archive"
 

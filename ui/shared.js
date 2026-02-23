@@ -1,8 +1,7 @@
 // ── Supabase client ──────────────────────────────────────────────────────────
-const SUPABASE_URL = 'http://127.0.0.1:54321'
-const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH'
+// Values are set in config.js (gitignored). See config.example.js for setup instructions.
 // Note: variable is named `db` to avoid colliding with the `window.supabase` global the SDK sets
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+const db = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY)
 
 // ── Shared helpers (mixed into Alpine components) ────────────────────────────
 
