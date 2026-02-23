@@ -19,7 +19,7 @@
       display: flex;
       gap: 0.75rem;
       align-items: flex-start;
-      padding: 0.75rem 0;
+      padding: 0.5rem 0;
       border-bottom: 1px solid var(--pico-border-color);
     }
     .utterance-result:last-child { border-bottom: none; }
@@ -54,6 +54,27 @@
     .semantic-badge {
       font-style: italic;
       opacity: 0.6;
+    }
+
+    /* Compact result rows inside a single card */
+    .result-row {
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--pico-border-color);
+    }
+    .result-row:last-child { border-bottom: none; }
+    .result-row-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+    .result-row-summary {
+      font-size: 0.85rem;
+      opacity: 0.65;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      margin: 0.1rem 0 0;
     }
   </style>
 </head>
@@ -152,29 +173,6 @@
     <template x-if="query.trim() && !loading">
       <div>
 
-        <!-- Meeting results -->
-        <h2>Meetings
-          <small x-show="meetingResults.length > 0" x-text="'(' + meetingResults.length + ')'"></small>
-        </h2>
-        <template x-if="meetingResults.length === 0">
-          <p><em>No matching meetings.</em></p>
-        </template>
-        <template x-for="m in meetingResults" :key="m.meeting_id">
-          <article>
-            <header>
-              <strong x-text="m.meeting_name || 'Untitled Meeting'"></strong>
-              &nbsp;·&nbsp;
-              <small x-text="formatDate(m.date)"></small>
-            </header>
-            <p x-text="m.short_summary"></p>
-            <footer>
-              <a :href="'meeting.html?id=' + m.meeting_id" role="button" class="outline">
-                View meeting →
-              </a>
-            </footer>
-          </article>
-        </template>
-
         <!-- Transcript mention results -->
         <h2>Transcript Mentions
           <small x-show="utteranceResults.length > 0" x-text="'(' + utteranceResults.length + ')'"></small>
@@ -193,7 +191,8 @@
                   &nbsp;·&nbsp;
                   <small x-text="formatDate(group.date)"></small>
                 </header>
-                <template x-for="u in group.utterances" :key="u.id">
+                <p style="font-size: 0.875rem; opacity: 0.7; margin: 0.1rem 0 0.5rem;" x-text="group.short_summary"></p>
+                <template x-for="u in (expandedGroups[group.meeting_id] ? group.utterances : group.utterances.slice(0, 3))" :key="u.id">
                   <div class="utterance-result">
                     <span class="avatar" :style="'background:' + speakerColor(u.speaker)" x-text="speakerInitial(u.speaker)"></span>
                     <div>
@@ -203,6 +202,13 @@
                       <p x-text="u.text" style="margin-top: 0.25rem; margin-bottom: 0;"></p>
                     </div>
                   </div>
+                </template>
+                <template x-if="group.utterances.length > 3">
+                  <p style="margin: 0.25rem 0 0; text-align: right;">
+                    <a href="#" @click.prevent="toggleGroup(group.meeting_id)" style="font-size: 0.85rem;">
+                      <span x-text="expandedGroups[group.meeting_id] ? 'Show less' : 'Show ' + (group.utterances.length - 3) + ' more…'"></span>
+                    </a>
+                  </p>
                 </template>
               </article>
             </template>
@@ -224,23 +230,20 @@
             <p x-show="semanticLoading && semanticMeetingResults.length === 0" aria-busy="true">
               Searching semantically…
             </p>
-            <template x-for="m in semanticMeetingResults" :key="m.meeting_id">
-              <article>
-                <header>
-                  <strong x-text="m.meeting_name || 'Untitled Meeting'"></strong>
-                  &nbsp;·&nbsp;
-                  <small x-text="formatDate(m.date)"></small>
-                  &nbsp;·&nbsp;
-                  <small class="semantic-badge">~ similar</small>
-                </header>
-                <p x-text="m.short_summary"></p>
-                <footer>
-                  <a :href="'meeting.html?id=' + m.meeting_id" role="button" class="outline">
-                    View meeting →
-                  </a>
-                </footer>
-              </article>
-            </template>
+            <article x-show="semanticMeetingResults.length > 0">
+              <template x-for="m in semanticMeetingResults" :key="m.meeting_id">
+                <div class="result-row">
+                  <div class="result-row-meta">
+                    <a :href="'meeting.html?id=' + m.meeting_id">
+                      <strong x-text="m.meeting_name || 'Untitled'"></strong>
+                      &nbsp;<small class="semantic-badge">~ similar</small>
+                    </a>
+                    <small x-text="formatDate(m.date)"></small>
+                  </div>
+                  <p class="result-row-summary" x-text="m.short_summary"></p>
+                </div>
+              </template>
+            </article>
           </div>
         </template>
 
@@ -271,18 +274,20 @@
         page: 1,
         totalCount: 0,
 
-        // Keyword search results
-        meetingResults: [],
+        // Transcript search results
         utteranceResults: [],
 
-        // Semantic search results (loaded after keyword, de-duped against meetingResults)
+        // Semantic search results (loaded in parallel with transcript search)
         semanticMeetingResults: [],
         semanticLoading: false,
+
+        // Tracks which utterance groups are expanded beyond the first 3 (meeting_id → bool)
+        expandedGroups: {},
 
         // Incremented on each new search so stale async results are discarded
         _searchGen: 0,
 
-        // Error message (shown if keyword search fails)
+        // Error message
         error: null,
 
         // ── Initialise: load the default view data ──────────────────────────
@@ -334,7 +339,7 @@
           const groups = {}
           for (const u of this.utteranceResults) {
             if (!groups[u.meeting_id]) {
-              groups[u.meeting_id] = { meeting_id: u.meeting_id, meeting_name: u.meeting_name, date: u.date, utterances: [] }
+              groups[u.meeting_id] = { meeting_id: u.meeting_id, meeting_name: u.meeting_name, short_summary: u.short_summary, date: u.date, utterances: [] }
             }
             groups[u.meeting_id].utterances.push(u)
           }
@@ -370,10 +375,10 @@
         async onSearch() {
           // When query is cleared, reset everything and return to default view
           if (!this.query.trim()) {
-            this.meetingResults = []
             this.utteranceResults = []
             this.semanticMeetingResults = []
             this.semanticLoading = false
+            this.expandedGroups = {}
             return
           }
 
@@ -384,28 +389,22 @@
           this.loading = true
           this.semanticLoading = true
           this.error = null
-          this.meetingResults = []
           this.utteranceResults = []
           this.semanticMeetingResults = []
 
           // Fire semantic search independently — it will resolve later without
-          // blocking the keyword results from appearing.
+          // blocking the transcript results from appearing.
           this._runSemantic(this.query, gen)
 
-          // Keyword search (fast — no embedding call)
+          // Transcript search (fast — no embedding call)
           try {
-            const [meetingsResp, utterancesResp] = await Promise.all([
-              db.rpc('search_meetings', { query: this.query }),
-              db.rpc('search_utterances', { query: this.query }),
-            ])
-            if (meetingsResp.error) throw new Error('search_meetings: ' + meetingsResp.error.message)
-            if (utterancesResp.error) throw new Error('search_utterances: ' + utterancesResp.error.message)
+            const resp = await db.rpc('search_utterances', { query: this.query })
+            if (resp.error) throw new Error('search_utterances: ' + resp.error.message)
             if (gen === this._searchGen) {
-              this.meetingResults = (meetingsResp.data || []).sort((a, b) => new Date(b.date) - new Date(a.date))
-              this.utteranceResults = utterancesResp.data || []
+              this.utteranceResults = resp.data || []
             }
           } catch (e) {
-            console.error('Keyword search failed:', e)
+            console.error('Transcript search failed:', e)
             if (gen === this._searchGen) this.error = e.message || String(e)
           } finally {
             if (gen === this._searchGen) this.loading = false
@@ -421,14 +420,17 @@
             const resp = await db.rpc('search_meetings_semantic', { query, match_count: 5 })
             if (gen !== this._searchGen) return  // stale — a newer search is in progress
             if (resp.error) throw new Error(resp.error.message)
-            const keywordIds = new Set(this.meetingResults.map(m => m.meeting_id))
-            this.semanticMeetingResults = (resp.data || []).filter(m => !keywordIds.has(m.meeting_id))
+            this.semanticMeetingResults = resp.data || []
           } catch (e) {
             // Semantic failure is non-fatal: log it but don't surface to user
             console.warn('Semantic search failed (non-fatal):', e)
           } finally {
             if (gen === this._searchGen) this.semanticLoading = false
           }
+        },
+
+        toggleGroup(id) {
+          this.expandedGroups[id] = !this.expandedGroups[id]
         },
 
         // ── Helpers ─────────────────────────────────────────────────────────

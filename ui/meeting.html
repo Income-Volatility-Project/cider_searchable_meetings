@@ -78,6 +78,28 @@
       margin-bottom: 0.15rem;
     }
     .utterance-text { margin: 0; }
+
+    /* In-page search highlights */
+    mark { background: #fff3a3; border-radius: 2px; padding: 0 1px; color: inherit; }
+    mark.mark-current { background: #ffa500; outline: 2px solid #e67e22; outline-offset: 1px; }
+
+    /* In-page search bar */
+    .inner-search {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .inner-search input[type="search"] { margin: 0; flex: 1; }
+    .match-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .match-nav small { min-width: 5rem; text-align: center; }
+    .match-nav button { padding: 0.2rem 0.6rem; margin: 0; }
   </style>
 </head>
 <body>
@@ -115,23 +137,52 @@
 
         <!-- ── Tabbed section ── -->
         <div>
-          <!-- Tab buttons -->
+          <!-- Tab buttons + search icon -->
           <div class="tab-bar">
             <button
               :class="{ active: tab === 'summary' }"
               @click="tab = 'summary'"
-            >Full Summary</button>
+            >Full Summary<span
+                x-show="innerQuery.trim() && summaryMatchCount > 0"
+                x-text="' (' + summaryMatchCount + ')'"
+              ></span></button>
             <button
               :class="{ active: tab === 'transcript' }"
               @click="tab = 'transcript'"
-            >Transcript</button>
+            >Transcript<span
+                x-show="innerQuery.trim() && transcriptMatchCount > 0"
+                x-text="' (' + transcriptMatchCount + ')'"
+              ></span></button>
+            <!-- Search toggle icon, right-aligned -->
+            <button
+              style="margin-left: auto"
+              :class="{ active: searchOpen }"
+              @click="toggleSearch()"
+              aria-label="Search in meeting"
+            ><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
+          </div>
+
+          <!-- In-page search bar (visible when searchOpen) -->
+          <div class="inner-search" x-show="searchOpen" x-transition>
+            <input
+              type="search"
+              placeholder="Search in this meeting…"
+              x-model="innerQuery"
+              x-ref="innerSearchInput"
+              @keydown.enter="nextMatch()"
+              @keydown.escape="toggleSearch()"
+            >
+            <div class="match-nav" x-show="innerQuery.trim()">
+              <small x-text="matchCount === 0 ? 'No matches' : (matchIndex + 1) + ' / ' + matchCount"></small>
+              <button class="outline" @click="prevMatch()" :disabled="matchCount === 0">‹</button>
+              <button class="outline" @click="nextMatch()" :disabled="matchCount === 0">›</button>
+            </div>
           </div>
 
           <!-- Full Summary pane -->
-          <div class="scroll-pane" x-show="tab === 'summary'">
-            <!-- Split on double-newline to render paragraphs properly -->
+          <div class="scroll-pane" x-show="tab === 'summary'" x-ref="summaryPane">
             <template x-for="(para, i) in summaryParagraphs()" :key="i">
-              <p class="summary-para" x-text="para"></p>
+              <p class="summary-para" x-html="highlight(para, innerQuery)"></p>
             </template>
             <template x-if="summaryParagraphs().length === 0">
               <p><em>No full summary available.</em></p>
@@ -139,7 +190,7 @@
           </div>
 
           <!-- Transcript pane -->
-          <div class="scroll-pane" x-show="tab === 'transcript'">
+          <div class="scroll-pane" x-show="tab === 'transcript'" x-ref="transcriptPane">
             <template x-if="utterances.length === 0">
               <p><em>No transcript available.</em></p>
             </template>
@@ -158,7 +209,7 @@
                     &nbsp;·&nbsp;
                     <span x-text="formatTime(u.start_time)"></span>
                   </div>
-                  <p class="utterance-text" x-text="u.text"></p>
+                  <p class="utterance-text" x-html="highlight(u.text, innerQuery)"></p>
                 </div>
               </div>
             </template>
@@ -186,6 +237,12 @@
         tab: 'summary',   // 'summary' | 'transcript'
         error: null,
 
+        // In-page search
+        searchOpen: false,
+        innerQuery: '',
+        matchIndex: 0,
+        matchCount: 0,
+
         // ── Load meeting + utterances in parallel ───────────────────────────
         async init() {
           const id = new URLSearchParams(window.location.search).get('id')
@@ -193,6 +250,10 @@
             this.loading = false
             return
           }
+
+          // Re-run mark discovery whenever query or active tab changes
+          this.$watch('innerQuery', () => this.updateMarks())
+          this.$watch('tab', () => this.updateMarks())
 
           try {
             const [meetingResp, utterancesResp] = await Promise.all([
@@ -228,6 +289,82 @@
             .split('\n\n')
             .map(p => p.trim())
             .filter(p => p.length > 0)
+        },
+
+        // ── In-page search ───────────────────────────────────────────────────
+
+        escapeHtml(str) {
+          return (str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+        },
+
+        // Returns HTML string with query matches wrapped in <mark>.
+        // Escapes text first so x-html is safe.
+        highlight(text, query) {
+          const escaped = this.escapeHtml(text)
+          if (!query.trim()) return escaped
+          const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+          return escaped.replace(re, m => `<mark>${m}</mark>`)
+        },
+
+        countMatches(text) {
+          if (!this.innerQuery.trim() || !text) return 0
+          const re = new RegExp(this.innerQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+          return (text.match(re) || []).length
+        },
+
+        get summaryMatchCount() {
+          return this.summaryParagraphs().reduce((s, p) => s + this.countMatches(p), 0)
+        },
+
+        get transcriptMatchCount() {
+          return this.utterances.reduce((s, u) => s + this.countMatches(u.text || ''), 0)
+        },
+
+        // After Alpine re-renders with new marks, find them in the active pane,
+        // update the count, and scroll to the first one.
+        updateMarks() {
+          this.$nextTick(() => {
+            const pane = this.tab === 'summary' ? this.$refs.summaryPane : this.$refs.transcriptPane
+            const marks = pane ? Array.from(pane.querySelectorAll('mark')) : []
+            this.matchCount = marks.length
+            this.matchIndex = 0
+            marks.forEach((m, i) => m.classList.toggle('mark-current', i === 0))
+            if (marks[0]) marks[0].scrollIntoView({ block: 'center', behavior: 'smooth' })
+          })
+        },
+
+        toggleSearch() {
+          this.searchOpen = !this.searchOpen
+          if (this.searchOpen) {
+            this.$nextTick(() => this.$refs.innerSearchInput.focus())
+          } else {
+            this.innerQuery = ''
+          }
+        },
+
+        // Re-query marks from the DOM and scroll to matchIndex.
+        _scrollToMark() {
+          const pane = this.tab === 'summary' ? this.$refs.summaryPane : this.$refs.transcriptPane
+          const marks = pane ? Array.from(pane.querySelectorAll('mark')) : []
+          marks.forEach((m, i) => m.classList.toggle('mark-current', i === this.matchIndex))
+          if (marks[this.matchIndex]) {
+            marks[this.matchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' })
+          }
+        },
+
+        nextMatch() {
+          if (this.matchCount === 0) return
+          this.matchIndex = (this.matchIndex + 1) % this.matchCount
+          this._scrollToMark()
+        },
+
+        prevMatch() {
+          if (this.matchCount === 0) return
+          this.matchIndex = (this.matchIndex - 1 + this.matchCount) % this.matchCount
+          this._scrollToMark()
         },
 
         // ── Helpers ─────────────────────────────────────────────────────────
