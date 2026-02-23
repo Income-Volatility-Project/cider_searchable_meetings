@@ -230,7 +230,8 @@
 
         // ── Load meeting + utterances in parallel ───────────────────────────
         async init() {
-          const id = new URLSearchParams(window.location.search).get('id')
+          const rawMatch = window.location.search.match(/[?&]id=([^&]*)/)
+          const id = rawMatch ? decodeURIComponent(rawMatch[1]) : null
           if (!id) {
             this.loading = false
             return

@@ -1,0 +1,34 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate config.js
+        if: github.event.action != 'closed'
+        run: |
+          echo "window.SUPABASE_URL='${{ secrets.SUPABASE_URL }}';" > ui/config.js
+          echo "window.SUPABASE_KEY='${{ secrets.SUPABASE_KEY }}';" >> ui/config.js
+
+      - name: Deploy preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: ui/
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          deploy-repository: ${{ github.repository }}
