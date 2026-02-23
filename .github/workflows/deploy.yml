@@ -6,9 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 # Only one deployment at a time; cancel in-progress if a new push arrives
 concurrency:
@@ -18,9 +16,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -31,11 +26,9 @@ jobs:
           echo "window.SUPABASE_URL='${{ secrets.SUPABASE_URL }}';" > ui/config.js
           echo "window.SUPABASE_KEY='${{ secrets.SUPABASE_KEY }}';" >> ui/config.js
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ui/
-
       - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: ui/
+          clean-exclude: pr-preview/
