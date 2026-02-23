@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting</title>
+  <!-- Pico CSS: classless, semantic HTML styling -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <!-- Alpine.js: reactive UI -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--pico-border-color);
+      margin-bottom: 1rem;
+    }
+    .tab-bar button {
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      padding: 0.5rem 1.25rem;
+      cursor: pointer;
+      font-size: 1rem;
+      color: var(--pico-muted-color);
+    }
+    .tab-bar button.active {
+      border-bottom-color: var(--pico-primary);
+      color: var(--pico-primary);
+      font-weight: bold;
+    }
+
+    /* Scrollable content area for both tab panes */
+    .scroll-pane {
+      height: 60vh;
+      overflow-y: auto;
+      border: 1px solid var(--pico-border-color);
+      border-radius: var(--pico-border-radius);
+      padding: 1rem 1.25rem;
+    }
+
+    /* Full summary paragraphs (full_summary uses \n\n as separator) */
+    .summary-para { margin-bottom: 1rem; }
+    .summary-para:last-child { margin-bottom: 0; }
+
+    /* Transcript utterance row */
+    .utterance {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--pico-border-color);
+    }
+    .utterance:last-child { border-bottom: none; }
+
+    /* Speaker avatar circle */
+    .avatar {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+    }
+
+    .utterance-meta {
+      font-size: 0.8rem;
+      color: var(--pico-muted-color);
+      margin-bottom: 0.15rem;
+    }
+    .utterance-text { margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="container" x-data="meetingApp()" x-init="init()">
+
+    <!-- ── Nav ── -->
+    <header>
+      <nav>
+        <ul><li><a href="index.html">← Back to search</a></li></ul>
+      </nav>
+    </header>
+
+    <!-- ── Loading / error states ── -->
+    <p x-show="loading" aria-busy="true">Loading meeting…</p>
+    <p x-show="error" style="color: var(--pico-del-color)">
+      Error: <span x-text="error"></span>
+      <br><small>Check the browser console (F12). Make sure you're serving over HTTP, not file://.</small>
+    </p>
+    <p x-show="!loading && !error && !meeting"><em>Meeting not found.</em></p>
+
+    <!-- ── Meeting content ── -->
+    <template x-if="meeting && !error">
+      <div>
+
+        <!-- Header: name + date -->
+        <hgroup>
+          <h1 x-text="meeting.meeting_name || 'Untitled Meeting'"></h1>
+          <p x-text="formatDate(meeting.date)"></p>
+        </hgroup>
+
+        <!-- Short summary (always visible) -->
+        <article>
+          <p x-text="meeting.short_summary"></p>
+        </article>
+
+        <!-- ── Tabbed section ── -->
+        <div>
+          <!-- Tab buttons -->
+          <div class="tab-bar">
+            <button
+              :class="{ active: tab === 'summary' }"
+              @click="tab = 'summary'"
+            >Full Summary</button>
+            <button
+              :class="{ active: tab === 'transcript' }"
+              @click="tab = 'transcript'"
+            >Transcript</button>
+          </div>
+
+          <!-- Full Summary pane -->
+          <div class="scroll-pane" x-show="tab === 'summary'">
+            <!-- Split on double-newline to render paragraphs properly -->
+            <template x-for="(para, i) in summaryParagraphs()" :key="i">
+              <p class="summary-para" x-text="para"></p>
+            </template>
+            <template x-if="summaryParagraphs().length === 0">
+              <p><em>No full summary available.</em></p>
+            </template>
+          </div>
+
+          <!-- Transcript pane -->
+          <div class="scroll-pane" x-show="tab === 'transcript'">
+            <template x-if="utterances.length === 0">
+              <p><em>No transcript available.</em></p>
+            </template>
+            <template x-for="u in utterances" :key="u.id">
+              <div class="utterance">
+                <!-- Speaker avatar -->
+                <span
+                  class="avatar"
+                  :style="'background:' + speakerColor(u.speaker)"
+                  x-text="speakerInitial(u.speaker)"
+                ></span>
+                <!-- Content -->
+                <div>
+                  <div class="utterance-meta">
+                    <strong x-text="u.speaker"></strong>
+                    &nbsp;·&nbsp;
+                    <span x-text="formatTime(u.start_time)"></span>
+                  </div>
+                  <p class="utterance-text" x-text="u.text"></p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+      </div>
+    </template>
+
+  </main>
+
+  <script>
+    // ── Supabase client ──────────────────────────────────────────────────────
+    const SUPABASE_URL = 'http://127.0.0.1:54321'
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH'
+    // Note: variable is named `db` to avoid colliding with the `window.supabase` global the SDK sets
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+
+    // ── Alpine component ─────────────────────────────────────────────────────
+    function meetingApp() {
+      return {
+        loading: true,
+        meeting: null,
+        utterances: [],
+        tab: 'summary',   // 'summary' | 'transcript'
+        error: null,
+
+        // ── Load meeting + utterances in parallel ───────────────────────────
+        async init() {
+          const id = new URLSearchParams(window.location.search).get('id')
+          if (!id) {
+            this.loading = false
+            return
+          }
+
+          try {
+            const [meetingResp, utterancesResp] = await Promise.all([
+              db
+                .from('meetings')
+                .select('*')
+                .eq('meeting_id', id)
+                .maybeSingle(),
+              db
+                .from('utterances')
+                .select('id, speaker, text, start_time, end_time')
+                .eq('meeting_id', id)
+                .order('start_time', { ascending: true }),
+            ])
+
+            if (meetingResp.error) throw new Error('meetings: ' + meetingResp.error.message)
+            if (utterancesResp.error) throw new Error('utterances: ' + utterancesResp.error.message)
+
+            this.meeting = meetingResp.data
+            this.utterances = utterancesResp.data || []
+          } catch (e) {
+            console.error('Failed to load meeting:', e)
+            this.error = e.message || String(e)
+          } finally {
+            this.loading = false
+          }
+        },
+
+        // ── Split full_summary on double-newlines into paragraphs ───────────
+        summaryParagraphs() {
+          if (!this.meeting?.full_summary) return []
+          return this.meeting.full_summary
+            .split('\n\n')
+            .map(p => p.trim())
+            .filter(p => p.length > 0)
+        },
+
+        // ── Helpers ─────────────────────────────────────────────────────────
+        formatDate(dateStr) {
+          if (!dateStr) return '—'
+          return new Date(dateStr).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          })
+        },
+
+        // Convert milliseconds to M:SS
+        formatTime(ms) {
+          if (ms == null) return ''
+          const totalSec = Math.floor(ms / 1000)
+          const min = Math.floor(totalSec / 60)
+          const sec = (totalSec % 60).toString().padStart(2, '0')
+          return `${min}:${sec}`
+        },
+
+        speakerInitial(name) {
+          return name ? name[0].toUpperCase() : '?'
+        },
+
+        // Deterministic color from speaker name
+        speakerColor(name) {
+          const palette = ['#4f8ef7', '#e67e22', '#2ecc71', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12']
+          if (!name) return palette[0]
+          const idx = [...name].reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % palette.length
+          return palette[idx]
+        },
+      }
+    }
+  </script>
+</body>
+</html>

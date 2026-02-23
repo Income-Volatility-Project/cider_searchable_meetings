@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting Search</title>
+  <!-- Pico CSS: classless, semantic HTML styling -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <!-- Alpine.js: reactive UI -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    /* Limit table from overflowing on small screens */
+    table { table-layout: fixed; word-break: break-word; }
+
+    /* Search result cards for utterances */
+    .utterance-result {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--pico-border-color);
+    }
+    .utterance-result:last-child { border-bottom: none; }
+
+    /* Speaker avatar circle */
+    .avatar {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+    }
+
+    /* Pagination controls */
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 1rem;
+    }
+
+    /* Keep the latest meeting card from getting too wide */
+    .latest-meeting { max-width: 640px; }
+
+    /* Badge on semantic-only results */
+    .semantic-badge {
+      font-style: italic;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <main class="container" x-data="searchApp()" x-init="init()">
+
+    <!-- ── Header ── -->
+    <header>
+      <nav>
+        <ul><li><strong>Meeting Search</strong></li></ul>
+      </nav>
+    </header>
+
+    <!-- ── Search bar ── -->
+    <input
+      type="search"
+      placeholder="Search meeting summaries and transcripts…"
+      x-model="query"
+      @input.debounce.350ms="onSearch()"
+      aria-label="Search"
+    >
+
+    <!-- ── Loading / error states ── -->
+    <p x-show="loading" aria-busy="true">Loading…</p>
+    <p x-show="error" style="color: var(--pico-del-color)">
+      Error: <span x-text="error"></span>
+      <br><small>Check the browser console (F12) for details. Make sure you're serving this page over HTTP, not opening it as a file://.</small>
+    </p>
+
+    <!-- ══════════════════════════════════════════════
+         DEFAULT VIEW (no active search query)
+    ═══════════════════════════════════════════════ -->
+    <template x-if="!query.trim() && !loading">
+
+      <div>
+        <!-- Most recent meeting preview card -->
+        <h2>Most Recent Meeting</h2>
+        <template x-if="latestMeeting">
+          <article>
+            <header>
+              <strong x-text="latestMeeting.meeting_name || 'Untitled Meeting'"></strong>
+              &nbsp;·&nbsp;
+              <small x-text="formatDate(latestMeeting.date)"></small>
+            </header>
+            <p x-text="latestMeeting.short_summary"></p>
+            <footer>
+              <a :href="'meeting.html?id=' + latestMeeting.meeting_id" role="button">
+                View meeting →
+              </a>
+            </footer>
+          </article>
+        </template>
+        <template x-if="!latestMeeting">
+          <p><em>No meetings found.</em></p>
+        </template>
+
+        <!-- All meetings table (paginated) -->
+        <h2>All Meetings</h2>
+        <figure>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 30%">Date</th>
+                <th>Name</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="meeting in allMeetings" :key="meeting.meeting_id">
+                <tr>
+                  <td x-text="formatDate(meeting.date)"></td>
+                  <td>
+                    <a :href="'meeting.html?id=' + meeting.meeting_id" x-text="meeting.meeting_name || 'Untitled'"></a>
+                  </td>
+                </tr>
+              </template>
+              <template x-if="allMeetings.length === 0">
+                <tr><td colspan="2"><em>No meetings yet.</em></td></tr>
+              </template>
+            </tbody>
+          </table>
+        </figure>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <button @click="prevPage()" :disabled="page === 1" class="outline">‹ Prev</button>
+          <span x-text="'Page ' + page + ' of ' + (totalPages || 1)"></span>
+          <button @click="nextPage()" :disabled="page >= totalPages" class="outline">Next ›</button>
+        </div>
+
+      </div>
+    </template>
+
+    <!-- ══════════════════════════════════════════════
+         SEARCH RESULTS VIEW
+    ═══════════════════════════════════════════════ -->
+    <template x-if="query.trim() && !loading">
+      <div>
+
+        <!-- Meeting results -->
+        <h2>Meetings
+          <small x-show="meetingResults.length > 0" x-text="'(' + meetingResults.length + ')'"></small>
+        </h2>
+        <template x-if="meetingResults.length === 0">
+          <p><em>No matching meetings.</em></p>
+        </template>
+        <template x-for="m in meetingResults" :key="m.meeting_id">
+          <article>
+            <header>
+              <strong x-text="m.meeting_name || 'Untitled Meeting'"></strong>
+              &nbsp;·&nbsp;
+              <small x-text="formatDate(m.date)"></small>
+            </header>
+            <p x-text="m.short_summary"></p>
+            <footer>
+              <a :href="'meeting.html?id=' + m.meeting_id" role="button" class="outline">
+                View meeting →
+              </a>
+            </footer>
+          </article>
+        </template>
+
+        <!-- Transcript mention results -->
+        <h2>Transcript Mentions
+          <small x-show="utteranceResults.length > 0" x-text="'(' + utteranceResults.length + ')'"></small>
+        </h2>
+        <template x-if="utteranceResults.length === 0">
+          <p><em>No matching transcript excerpts.</em></p>
+        </template>
+        <template x-if="utteranceResults.length > 0">
+          <div>
+            <template x-for="group in groupedUtterances" :key="group.meeting_id">
+              <article>
+                <header>
+                  <a :href="'meeting.html?id=' + group.meeting_id">
+                    <strong x-text="group.meeting_name || group.meeting_id"></strong>
+                  </a>
+                  &nbsp;·&nbsp;
+                  <small x-text="formatDate(group.date)"></small>
+                </header>
+                <template x-for="u in group.utterances" :key="u.id">
+                  <div class="utterance-result">
+                    <span class="avatar" :style="'background:' + speakerColor(u.speaker)" x-text="speakerInitial(u.speaker)"></span>
+                    <div>
+                      <strong x-text="u.speaker"></strong>
+                      &nbsp;·&nbsp;
+                      <small x-text="formatTime(u.start_time)"></small>
+                      <p x-text="u.text" style="margin-top: 0.25rem; margin-bottom: 0;"></p>
+                    </div>
+                  </div>
+                </template>
+              </article>
+            </template>
+          </div>
+        </template>
+
+        <!-- ── Also related (semantic) ── -->
+        <!-- Visible while semantic search is in-flight or once results arrive.
+             Hidden entirely if semantic found nothing after loading. -->
+        <template x-if="semanticLoading || semanticMeetingResults.length > 0">
+          <div>
+            <hr>
+            <h2>
+              Also related
+              <small x-show="semanticLoading" aria-busy="true"> · finding similar…</small>
+              <small x-show="!semanticLoading && semanticMeetingResults.length > 0"
+                     x-text="'(' + semanticMeetingResults.length + ')'"></small>
+            </h2>
+            <p x-show="semanticLoading && semanticMeetingResults.length === 0" aria-busy="true">
+              Searching semantically…
+            </p>
+            <template x-for="m in semanticMeetingResults" :key="m.meeting_id">
+              <article>
+                <header>
+                  <strong x-text="m.meeting_name || 'Untitled Meeting'"></strong>
+                  &nbsp;·&nbsp;
+                  <small x-text="formatDate(m.date)"></small>
+                  &nbsp;·&nbsp;
+                  <small class="semantic-badge">~ similar</small>
+                </header>
+                <p x-text="m.short_summary"></p>
+                <footer>
+                  <a :href="'meeting.html?id=' + m.meeting_id" role="button" class="outline">
+                    View meeting →
+                  </a>
+                </footer>
+              </article>
+            </template>
+          </div>
+        </template>
+
+      </div>
+    </template>
+
+  </main>
+
+  <script>
+    // ── Supabase client ──────────────────────────────────────────────────────
+    const SUPABASE_URL = 'http://127.0.0.1:54321'
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH'
+    // Note: variable is named `db` to avoid colliding with the `window.supabase` global the SDK sets
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
+
+    // ── Page size for the meetings table ────────────────────────────────────
+    const PAGE_SIZE = 10
+
+    // ── Alpine component ─────────────────────────────────────────────────────
+    function searchApp() {
+      return {
+        query: '',
+        loading: false,
+
+        // Default view state
+        latestMeeting: null,
+        allMeetings: [],
+        page: 1,
+        totalCount: 0,
+
+        // Keyword search results
+        meetingResults: [],
+        utteranceResults: [],
+
+        // Semantic search results (loaded after keyword, de-duped against meetingResults)
+        semanticMeetingResults: [],
+        semanticLoading: false,
+
+        // Incremented on each new search so stale async results are discarded
+        _searchGen: 0,
+
+        // Error message (shown if keyword search fails)
+        error: null,
+
+        // ── Initialise: load the default view data ──────────────────────────
+        async init() {
+          this.loading = true
+          this.error = null
+          try {
+            await Promise.all([
+              this.loadLatestMeeting(),
+              this.loadMeetings(),
+            ])
+          } catch (e) {
+            console.error('Failed to load meetings:', e)
+            this.error = e.message || String(e)
+          } finally {
+            this.loading = false
+          }
+        },
+
+        // ── Load the most recent meeting for the preview card ───────────────
+        async loadLatestMeeting() {
+          const { data, error } = await db
+            .from('meetings')
+            .select('*')
+            .order('date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (error) throw new Error('loadLatestMeeting: ' + error.message)
+          this.latestMeeting = data
+        },
+
+        // ── Load one page of meetings for the table ─────────────────────────
+        async loadMeetings() {
+          const from = (this.page - 1) * PAGE_SIZE
+          const to = from + PAGE_SIZE - 1
+          const { data, count, error } = await db
+            .from('meetings')
+            .select('meeting_id, meeting_name, date', { count: 'exact' })
+            .order('date', { ascending: false })
+            .range(from, to)
+          if (error) throw new Error('loadMeetings: ' + error.message)
+          this.allMeetings = data || []
+          this.totalCount = count || 0
+        },
+
+        // Group utteranceResults by meeting, sorted by meeting date desc;
+        // utterances within each group sorted by start_time asc.
+        get groupedUtterances() {
+          const groups = {}
+          for (const u of this.utteranceResults) {
+            if (!groups[u.meeting_id]) {
+              groups[u.meeting_id] = { meeting_id: u.meeting_id, meeting_name: u.meeting_name, date: u.date, utterances: [] }
+            }
+            groups[u.meeting_id].utterances.push(u)
+          }
+          for (const g of Object.values(groups)) {
+            g.utterances.sort((a, b) => (a.start_time || 0) - (b.start_time || 0))
+          }
+          return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date))
+        },
+
+        get totalPages() {
+          return Math.max(1, Math.ceil(this.totalCount / PAGE_SIZE))
+        },
+
+        async prevPage() {
+          if (this.page > 1) {
+            this.page--
+            this.loading = true
+            await this.loadMeetings()
+            this.loading = false
+          }
+        },
+
+        async nextPage() {
+          if (this.page < this.totalPages) {
+            this.page++
+            this.loading = true
+            await this.loadMeetings()
+            this.loading = false
+          }
+        },
+
+        // ── Search: called on debounced input ───────────────────────────────
+        async onSearch() {
+          // When query is cleared, reset everything and return to default view
+          if (!this.query.trim()) {
+            this.meetingResults = []
+            this.utteranceResults = []
+            this.semanticMeetingResults = []
+            this.semanticLoading = false
+            return
+          }
+
+          // Stamp this search so any older in-flight semantic calls are discarded
+          this._searchGen++
+          const gen = this._searchGen
+
+          this.loading = true
+          this.semanticLoading = true
+          this.error = null
+          this.meetingResults = []
+          this.utteranceResults = []
+          this.semanticMeetingResults = []
+
+          // Fire semantic search independently — it will resolve later without
+          // blocking the keyword results from appearing.
+          this._runSemantic(this.query, gen)
+
+          // Keyword search (fast — no embedding call)
+          try {
+            const [meetingsResp, utterancesResp] = await Promise.all([
+              db.rpc('search_meetings', { query: this.query }),
+              db.rpc('search_utterances', { query: this.query }),
+            ])
+            if (meetingsResp.error) throw new Error('search_meetings: ' + meetingsResp.error.message)
+            if (utterancesResp.error) throw new Error('search_utterances: ' + utterancesResp.error.message)
+            if (gen === this._searchGen) {
+              this.meetingResults = (meetingsResp.data || []).sort((a, b) => new Date(b.date) - new Date(a.date))
+              this.utteranceResults = utterancesResp.data || []
+            }
+          } catch (e) {
+            console.error('Keyword search failed:', e)
+            if (gen === this._searchGen) this.error = e.message || String(e)
+          } finally {
+            if (gen === this._searchGen) this.loading = false
+          }
+        },
+
+        // ── Semantic search: runs in parallel with keyword, resolves later ──
+        // Uses search_meetings_semantic (short_summary embeddings).
+        // De-duplicates against meetingResults so the "Also related" section
+        // only shows meetings not already found by keyword search.
+        async _runSemantic(query, gen) {
+          try {
+            const resp = await db.rpc('search_meetings_semantic', { query, match_count: 5 })
+            if (gen !== this._searchGen) return  // stale — a newer search is in progress
+            if (resp.error) throw new Error(resp.error.message)
+            const keywordIds = new Set(this.meetingResults.map(m => m.meeting_id))
+            this.semanticMeetingResults = (resp.data || []).filter(m => !keywordIds.has(m.meeting_id))
+          } catch (e) {
+            // Semantic failure is non-fatal: log it but don't surface to user
+            console.warn('Semantic search failed (non-fatal):', e)
+          } finally {
+            if (gen === this._searchGen) this.semanticLoading = false
+          }
+        },
+
+        // ── Helpers ─────────────────────────────────────────────────────────
+        formatDate(dateStr) {
+          if (!dateStr) return '—'
+          return new Date(dateStr).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'short', day: 'numeric',
+          })
+        },
+
+        // Convert milliseconds to M:SS
+        formatTime(ms) {
+          if (ms == null) return ''
+          const totalSec = Math.floor(ms / 1000)
+          const min = Math.floor(totalSec / 60)
+          const sec = (totalSec % 60).toString().padStart(2, '0')
+          return `${min}:${sec}`
+        },
+
+        speakerInitial(name) {
+          return name ? name[0].toUpperCase() : '?'
+        },
+
+        // Deterministic color from speaker name
+        speakerColor(name) {
+          const palette = ['#4f8ef7', '#e67e22', '#2ecc71', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12']
+          if (!name) return palette[0]
+          const idx = [...name].reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % palette.length
+          return palette[idx]
+        },
+      }
+    }
+  </script>
+</body>
+</html>
