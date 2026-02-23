@@ -36,35 +36,42 @@ COMMENT ON COLUMN meetings.summary_tsv IS
 
 -- ── search helpers ───────────────────────────────────────────────────────────
 
--- Returns matching utterances ranked by relevance.
-CREATE OR REPLACE FUNCTION search_utterances(query TEXT)
+-- Returns matching utterances ranked by relevance, with meeting metadata via JOIN.
+CREATE FUNCTION search_utterances(query TEXT)
 RETURNS TABLE (
-    id         BIGINT,
-    meeting_id TEXT,
-    speaker    TEXT,
-    text       TEXT,
-    start_time INTEGER,
-    end_time   INTEGER,
-    rank       REAL
+    id            BIGINT,
+    meeting_id    TEXT,
+    meeting_name  TEXT,
+    short_summary TEXT,
+    date          TIMESTAMP WITH TIME ZONE,
+    speaker       TEXT,
+    text          TEXT,
+    start_time    INTEGER,
+    end_time      INTEGER,
+    rank          REAL
 )
 LANGUAGE sql
 STABLE
 AS $$
     SELECT
-        id,
-        meeting_id,
-        speaker,
-        text,
-        start_time,
-        end_time,
-        ts_rank(text_tsv, websearch_to_tsquery('english', query))::REAL AS rank
-    FROM utterances
-    WHERE text_tsv @@ websearch_to_tsquery('english', query)
+        u.id,
+        u.meeting_id,
+        m.meeting_name,
+        m.short_summary,
+        m.date,
+        u.speaker,
+        u.text,
+        u.start_time,
+        u.end_time,
+        ts_rank(u.text_tsv, websearch_to_tsquery('english', query))::REAL AS rank
+    FROM utterances u
+    JOIN meetings m USING (meeting_id)
+    WHERE u.text_tsv @@ websearch_to_tsquery('english', query)
     ORDER BY rank DESC;
 $$;
 
 COMMENT ON FUNCTION search_utterances(TEXT) IS
-    'Full-text search over utterances.text; accepts websearch-style queries';
+    'Full-text search over utterances.text; returns meeting name, short_summary, and date via JOIN for UI grouping';
 
 
 -- Returns matching meetings ranked by relevance.

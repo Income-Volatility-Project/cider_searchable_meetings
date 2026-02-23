@@ -220,6 +220,7 @@ BEGIN
             FROM   utterances
             WHERE  meeting_id = p_meeting_id
               AND  embedding IS NULL
+            FOR UPDATE SKIP LOCKED
         LOOP
             UPDATE utterances
             SET    embedding = openai_embed(v_utterance.text)
@@ -238,7 +239,7 @@ $$;
 
 COMMENT ON FUNCTION embed_utterances(TEXT) IS
     'Generate embeddings for every utterance in a meeting that does not yet '
-    'have an embedding. Resumable: safe to call multiple times.';
+    'have an embedding. Resumable and concurrency-safe (FOR UPDATE SKIP LOCKED).';
 
 
 -- ── embed_all_meetings — batch helper ────────────────────────────────────────
@@ -255,6 +256,7 @@ BEGIN
         SELECT m.meeting_id
         FROM   meetings m
         WHERE  m.short_summary_embedding IS NULL
+        FOR UPDATE SKIP LOCKED
     LOOP
         SELECT * INTO v_result FROM embed_meeting(v_meeting.meeting_id);
         RETURN QUERY SELECT v_meeting.meeting_id, v_result.success, v_result.error_message;
@@ -263,7 +265,9 @@ END;
 $$;
 
 COMMENT ON FUNCTION embed_all_meetings() IS
-    'Batch-embed all meetings that do not yet have a short_summary_embedding.';
+    'Batch-embed all meetings that do not yet have a short_summary_embedding. '
+    'Concurrency-safe: FOR UPDATE SKIP LOCKED lets concurrent cron jobs process '
+    'different meetings in parallel.';
 
 
 -- ── embed_all_utterances — batch helper ──────────────────────────────────────
@@ -426,3 +430,22 @@ $$;
 COMMENT ON FUNCTION search_meeting_chunks_semantic(TEXT, INTEGER) IS
     'Semantic search over full_summary paragraphs. Returns top match_count chunks '
     'by cosine similarity, descending, with their parent meeting_name.';
+
+
+-- ── embed_pending — wrapper for pg_cron ─────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION embed_pending()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    PERFORM * FROM embed_all_meetings();
+    PERFORM * FROM embed_all_utterances();
+END;
+$$;
+
+COMMENT ON FUNCTION embed_pending() IS
+    'Called by the embed-pending pg_cron job every 10 minutes. '
+    'Embeds all meetings and utterances that are missing embeddings.';

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meeting</title>
+  <!-- Pico CSS: classless, semantic HTML styling -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <!-- Alpine.js: reactive UI -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="shared.css">
+  <style>
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--pico-border-color);
+      margin-bottom: 1rem;
+    }
+    .tab-bar button {
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      padding: 0.5rem 1.25rem;
+      cursor: pointer;
+      font-size: 1rem;
+      color: var(--pico-muted-color);
+    }
+    .tab-bar button.active {
+      border-bottom-color: var(--pico-primary);
+      color: var(--pico-primary);
+      font-weight: bold;
+    }
+
+    /* Scrollable content area for both tab panes */
+    .scroll-pane {
+      height: 60vh;
+      overflow-y: auto;
+      border: 1px solid var(--pico-border-color);
+      border-radius: var(--pico-border-radius);
+      padding: 1rem 1.25rem;
+    }
+
+    /* Full summary paragraphs (full_summary uses \n\n as separator) */
+    .summary-para { margin-bottom: 1rem; }
+    .summary-para:last-child { margin-bottom: 0; }
+
+    /* Transcript utterance row */
+    .utterance {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--pico-border-color);
+    }
+    .utterance:last-child { border-bottom: none; }
+
+    /* Nudge avatar down slightly to align with utterance text */
+    .utterance .avatar { margin-top: 0.1rem; }
+
+    .utterance-meta {
+      font-size: 0.8rem;
+      color: var(--pico-muted-color);
+      margin-bottom: 0.15rem;
+    }
+    .utterance-text { margin: 0; }
+
+    /* In-page search highlights */
+    mark { background: #fff3a3; border-radius: 2px; padding: 0 1px; color: inherit; }
+    mark.mark-current { background: #ffa500; outline: 2px solid #e67e22; outline-offset: 1px; }
+
+    /* In-page search bar */
+    .inner-search {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .inner-search input[type="search"] { margin: 0; flex: 1; }
+    .match-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .match-nav small { min-width: 5rem; text-align: center; }
+    .match-nav button { padding: 0.2rem 0.6rem; margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="container" x-data="meetingApp()" x-init="init()">
+
+    <!-- ── Nav ── -->
+    <header>
+      <nav>
+        <ul><li><a href="index.html">← Back to search</a></li></ul>
+      </nav>
+    </header>
+
+    <!-- ── Loading / error states ── -->
+    <p x-show="loading" aria-busy="true">Loading meeting…</p>
+    <p x-show="error" style="color: var(--pico-del-color)">
+      Error: <span x-text="error"></span>
+      <br><small>Check the browser console (F12). Make sure you're serving over HTTP, not file://.</small>
+    </p>
+    <p x-show="!loading && !error && !meeting"><em>Meeting not found.</em></p>
+
+    <!-- ── Meeting content ── -->
+    <template x-if="meeting && !error">
+      <div>
+
+        <!-- Header: name + date -->
+        <hgroup>
+          <h1 x-text="meeting.meeting_name || 'Untitled Meeting'"></h1>
+          <p x-text="formatDate(meeting.date)"></p>
+        </hgroup>
+
+        <!-- Short summary (always visible) -->
+        <article>
+          <p x-text="meeting.short_summary"></p>
+        </article>
+
+        <!-- ── Tabbed section ── -->
+        <div>
+          <!-- Tab buttons + search icon -->
+          <div class="tab-bar">
+            <button
+              :class="{ active: tab === 'summary' }"
+              @click="tab = 'summary'"
+            >Full Summary<span
+                x-show="innerQuery.trim() && summaryMatchCount > 0"
+                x-text="' (' + summaryMatchCount + ')'"
+              ></span></button>
+            <button
+              :class="{ active: tab === 'transcript' }"
+              @click="tab = 'transcript'"
+            >Transcript<span
+                x-show="innerQuery.trim() && transcriptMatchCount > 0"
+                x-text="' (' + transcriptMatchCount + ')'"
+              ></span></button>
+            <!-- Search toggle icon, right-aligned -->
+            <button
+              style="margin-left: auto"
+              :class="{ active: searchOpen }"
+              @click="toggleSearch()"
+              aria-label="Search in meeting"
+            ><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
+          </div>
+
+          <!-- In-page search bar (visible when searchOpen) -->
+          <div class="inner-search" x-show="searchOpen" x-transition>
+            <input
+              type="search"
+              placeholder="Search in this meeting…"
+              x-model="innerQuery"
+              x-ref="innerSearchInput"
+              @keydown.enter="nextMatch()"
+              @keydown.escape="toggleSearch()"
+            >
+            <div class="match-nav" x-show="innerQuery.trim()">
+              <small x-text="matchCount === 0 ? 'No matches' : (matchIndex + 1) + ' / ' + matchCount"></small>
+              <button class="outline" @click="prevMatch()" :disabled="matchCount === 0">‹</button>
+              <button class="outline" @click="nextMatch()" :disabled="matchCount === 0">›</button>
+            </div>
+          </div>
+
+          <!-- Full Summary pane -->
+          <div class="scroll-pane" x-show="tab === 'summary'" x-ref="summaryPane">
+            <template x-for="(para, i) in summaryParagraphs()" :key="i">
+              <p class="summary-para" x-html="highlight(para, innerQuery)"></p>
+            </template>
+            <template x-if="summaryParagraphs().length === 0">
+              <p><em>No full summary available.</em></p>
+            </template>
+          </div>
+
+          <!-- Transcript pane -->
+          <div class="scroll-pane" x-show="tab === 'transcript'" x-ref="transcriptPane">
+            <template x-if="utterances.length === 0">
+              <p><em>No transcript available.</em></p>
+            </template>
+            <template x-for="u in utterances" :key="u.id">
+              <div class="utterance">
+                <!-- Speaker avatar -->
+                <span
+                  class="avatar"
+                  :style="'background:' + speakerColor(u.speaker)"
+                  x-text="speakerInitial(u.speaker)"
+                ></span>
+                <!-- Content -->
+                <div>
+                  <div class="utterance-meta">
+                    <strong x-text="u.speaker"></strong>
+                    &nbsp;·&nbsp;
+                    <span x-text="formatTime(u.start_time)"></span>
+                  </div>
+                  <p class="utterance-text" x-html="highlight(u.text, innerQuery)"></p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+      </div>
+    </template>
+
+  </main>
+
+  <script src="config.js"></script>
+  <script src="shared.js"></script>
+  <script>
+    // ── Alpine component ─────────────────────────────────────────────────────
+    function meetingApp() {
+      return {
+        loading: true,
+        meeting: null,
+        utterances: [],
+        tab: 'summary',   // 'summary' | 'transcript'
+        error: null,
+
+        // In-page search
+        searchOpen: false,
+        innerQuery: '',
+        matchIndex: 0,
+        matchCount: 0,
+
+        // ── Load meeting + utterances in parallel ───────────────────────────
+        async init() {
+          const id = new URLSearchParams(window.location.search).get('id')
+          if (!id) {
+            this.loading = false
+            return
+          }
+
+          // Re-run mark discovery whenever query or active tab changes
+          this.$watch('innerQuery', () => this.updateMarks())
+          this.$watch('tab', () => this.updateMarks())
+
+          try {
+            const [meetingResp, utterancesResp] = await Promise.all([
+              db
+                .from('meetings')
+                .select('*')
+                .eq('meeting_id', id)
+                .maybeSingle(),
+              db
+                .from('utterances')
+                .select('id, speaker, text, start_time, end_time')
+                .eq('meeting_id', id)
+                .order('start_time', { ascending: true }),
+            ])
+
+            if (meetingResp.error) throw new Error('meetings: ' + meetingResp.error.message)
+            if (utterancesResp.error) throw new Error('utterances: ' + utterancesResp.error.message)
+
+            this.meeting = meetingResp.data
+            this.utterances = utterancesResp.data || []
+          } catch (e) {
+            console.error('Failed to load meeting:', e)
+            this.error = e.message || String(e)
+          } finally {
+            this.loading = false
+          }
+        },
+
+        // ── Split full_summary on double-newlines into paragraphs ───────────
+        summaryParagraphs() {
+          if (!this.meeting?.full_summary) return []
+          return this.meeting.full_summary
+            .split('\n\n')
+            .map(p => p.trim())
+            .filter(p => p.length > 0)
+        },
+
+        // ── In-page search ───────────────────────────────────────────────────
+
+        escapeHtml(str) {
+          return (str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+        },
+
+        // Returns HTML string with query matches wrapped in <mark>.
+        // Escapes text first so x-html is safe.
+        highlight(text, query) {
+          const escaped = this.escapeHtml(text)
+          if (!query.trim()) return escaped
+          const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+          return escaped.replace(re, m => `<mark>${m}</mark>`)
+        },
+
+        countMatches(text) {
+          if (!this.innerQuery.trim() || !text) return 0
+          const re = new RegExp(this.innerQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+          return (text.match(re) || []).length
+        },
+
+        get summaryMatchCount() {
+          return this.summaryParagraphs().reduce((s, p) => s + this.countMatches(p), 0)
+        },
+
+        get transcriptMatchCount() {
+          return this.utterances.reduce((s, u) => s + this.countMatches(u.text || ''), 0)
+        },
+
+        // After Alpine re-renders with new marks, find them in the active pane,
+        // update the count, and scroll to the first one.
+        updateMarks() {
+          this.$nextTick(() => {
+            const pane = this.tab === 'summary' ? this.$refs.summaryPane : this.$refs.transcriptPane
+            const marks = pane ? Array.from(pane.querySelectorAll('mark')) : []
+            this.matchCount = marks.length
+            this.matchIndex = 0
+            marks.forEach((m, i) => m.classList.toggle('mark-current', i === 0))
+            if (marks[0]) marks[0].scrollIntoView({ block: 'center', behavior: 'smooth' })
+          })
+        },
+
+        toggleSearch() {
+          this.searchOpen = !this.searchOpen
+          if (this.searchOpen) {
+            this.$nextTick(() => this.$refs.innerSearchInput.focus())
+          } else {
+            this.innerQuery = ''
+          }
+        },
+
+        // Re-query marks from the DOM and scroll to matchIndex.
+        _scrollToMark() {
+          const pane = this.tab === 'summary' ? this.$refs.summaryPane : this.$refs.transcriptPane
+          const marks = pane ? Array.from(pane.querySelectorAll('mark')) : []
+          marks.forEach((m, i) => m.classList.toggle('mark-current', i === this.matchIndex))
+          if (marks[this.matchIndex]) {
+            marks[this.matchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' })
+          }
+        },
+
+        nextMatch() {
+          if (this.matchCount === 0) return
+          this.matchIndex = (this.matchIndex + 1) % this.matchCount
+          this._scrollToMark()
+        },
+
+        prevMatch() {
+          if (this.matchCount === 0) return
+          this.matchIndex = (this.matchIndex - 1 + this.matchCount) % this.matchCount
+          this._scrollToMark()
+        },
+
+        // ── Helpers ─────────────────────────────────────────────────────────
+        formatDate(dateStr) {
+          if (!dateStr) return '—'
+          return new Date(dateStr).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          })
+        },
+        formatTime,
+        speakerInitial,
+        speakerColor,
+      }
+    }
+  </script>
+</body>
+</html>
