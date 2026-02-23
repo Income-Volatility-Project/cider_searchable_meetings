@@ -108,7 +108,7 @@
             </header>
             <p x-text="latestMeeting.short_summary"></p>
             <footer>
-              <a :href="'meeting.html?id=' + latestMeeting.meeting_id" role="button">
+              <a :href="'meeting.html?id=' + encodeURIComponent(latestMeeting.meeting_id)" role="button">
                 View meeting →
               </a>
             </footer>
@@ -133,7 +133,7 @@
                 <tr>
                   <td x-text="formatDate(meeting.date)"></td>
                   <td>
-                    <a :href="'meeting.html?id=' + meeting.meeting_id" x-text="meeting.meeting_name || 'Untitled'"></a>
+                    <a :href="'meeting.html?id=' + encodeURIComponent(meeting.meeting_id)" x-text="meeting.meeting_name || 'Untitled'"></a>
                   </td>
                 </tr>
               </template>
@@ -172,7 +172,7 @@
             <template x-for="group in groupedUtterances" :key="group.meeting_id">
               <article>
                 <header>
-                  <a :href="'meeting.html?id=' + group.meeting_id">
+                  <a :href="'meeting.html?id=' + encodeURIComponent(group.meeting_id)">
                     <strong x-text="group.meeting_name || group.meeting_id"></strong>
                   </a>
                   &nbsp;·&nbsp;
@@ -221,7 +221,7 @@
               <template x-for="m in semanticMeetingResults" :key="m.meeting_id">
                 <div class="result-row">
                   <div class="result-row-meta">
-                    <a :href="'meeting.html?id=' + m.meeting_id">
+                    <a :href="'meeting.html?id=' + encodeURIComponent(m.meeting_id)">
                       <strong x-text="m.meeting_name || 'Untitled'"></strong>
                       &nbsp;<small class="semantic-badge">~ similar</small>
                     </a>
