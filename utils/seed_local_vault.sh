@@ -12,12 +12,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_ROOT/.env"
-LOCAL_DB_URL="postgresql://postgres:postgres@localhost:54322/postgres"
 
 # Load .env if it exists
 if [[ -f "$ENV_FILE" ]]; then
     # Export only OPENAI_API_KEY to avoid polluting the environment
     OPENAI_API_KEY="$(grep -E '^OPENAI_API_KEY=' "$ENV_FILE" | head -1 | cut -d'"' -f2 | cut -d"'" -f2 | sed 's/^[^=]*=//')"
+
+    DB_URL="$(grep -E '^DB_URL=' "$ENV_FILE" | head -1 | cut -d'"' -f2 | cut -d"'" -f2 | sed 's/^[^=]*=//')"
 fi
 
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
@@ -25,7 +26,7 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     exit 1
 fi
 
-psql "$LOCAL_DB_URL" <<SQL
+psql "$DB_URL" <<SQL
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM vault.decrypted_secrets WHERE name = 'OPENAI_API_KEY') THEN
@@ -39,8 +40,6 @@ END;
 
 -- Backfill embeddings for any rows inserted before the vault key was available
 -- (e.g. seed.sql runs during `supabase db reset` before this script).
-SELECT embed_all_meetings();
-SELECT embed_all_utterances();
 SQL
 
 echo "Done."
