@@ -9,7 +9,7 @@
 	},
 	"d1_databases": [
 		{
-			"binding": "cider_searchable_meetings",
+			"binding": "DB",
 			"database_name": "cider_searchable_meetings",
 			"database_id": "33f51c31-06cf-442e-948d-2e79df4a8785"
 		}
