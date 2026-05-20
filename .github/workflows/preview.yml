@@ -22,8 +22,7 @@ jobs:
       - name: Generate config.js
         if: github.event.action != 'closed'
         run: |
-          echo "window.SUPABASE_URL='${{ secrets.SUPABASE_URL }}';" > ui/config.js
-          echo "window.SUPABASE_KEY='${{ secrets.SUPABASE_KEY }}';" >> ui/config.js
+          echo "window.API_URL='${{ secrets.API_URL }}';" > ui/config.js
 
       - name: Deploy preview
         uses: rossjrw/pr-preview-action@v1
