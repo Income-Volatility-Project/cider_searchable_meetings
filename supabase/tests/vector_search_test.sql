@@ -3,14 +3,14 @@
 -- API calls to OpenAI are avoided: tests that exercise search functions
 -- insert pre-computed dummy embeddings directly so we can validate schema,
 -- chunk splitting, and ANN search logic without network dependencies.
+--
+-- Note: utterances.embedding and its associated index were removed in
+-- migration 20260302100000_drop_utterance_embeddings.sql.
 
 BEGIN;
-SELECT plan(18);
+SELECT plan(13);
 
 -- ── Schema: columns ──────────────────────────────────────────────────────────
-
-SELECT col_type_is('public', 'utterances', 'embedding', 'vector(1536)',
-    'utterances.embedding should be vector(1536)');
 
 SELECT col_type_is('public', 'meetings', 'short_summary_embedding', 'vector(1536)',
     'meetings.short_summary_embedding should be vector(1536)');
@@ -27,9 +27,6 @@ SELECT col_type_is('public', 'meeting_summary_chunks', 'chunk_index', 'integer',
     'meeting_summary_chunks.chunk_index should be integer');
 
 -- ── Schema: HNSW indexes ─────────────────────────────────────────────────────
-
-SELECT has_index('public', 'utterances', 'idx_utterances_embedding',
-    'HNSW index on utterances.embedding should exist');
 
 SELECT has_index('public', 'meetings', 'idx_meetings_short_summary_embedding',
     'HNSW index on meetings.short_summary_embedding should exist');
@@ -86,13 +83,6 @@ BEGIN
     v_dim_a := v_arr_a::vector(1536);
     v_dim_b := v_arr_b::vector(1536);
 
-    -- Alice → direction A, Bob → direction B
-    UPDATE utterances SET embedding = v_dim_a
-    WHERE  meeting_id = 'vec_test_01' AND speaker = 'Alice';
-
-    UPDATE utterances SET embedding = v_dim_b
-    WHERE  meeting_id = 'vec_test_01' AND speaker = 'Bob';
-
     -- Meeting short_summary → direction A
     UPDATE meetings SET short_summary_embedding = v_dim_a
     WHERE  meeting_id = 'vec_test_01';
@@ -100,18 +90,10 @@ BEGIN
     -- Two summary chunks: chunk 0 → direction A, chunk 1 → direction B
     INSERT INTO meeting_summary_chunks (meeting_id, chunk_index, chunk_text, embedding)
     VALUES
-        ('vec_test_01', 0, 'Quarterly budget chunk.',    v_dim_a),
+        ('vec_test_01', 0, 'Quarterly budget chunk.',      v_dim_a),
         ('vec_test_01', 1, 'Marketing expenditure chunk.', v_dim_b);
 END;
 $$;
-
--- All utterances for vec_test_01 should now have embeddings
-SELECT is(
-    (SELECT count(*)::int FROM utterances
-     WHERE  meeting_id = 'vec_test_01' AND embedding IS NULL),
-    0,
-    'all utterances for vec_test_01 should have embeddings'
-);
 
 -- Meeting embedding is set
 SELECT ok(
@@ -126,39 +108,6 @@ SELECT is(
      WHERE  meeting_id = 'vec_test_01' AND embedding IS NOT NULL),
     2,
     'vec_test_01 should have 2 summary chunks with embeddings'
-);
-
--- Cosine ordering: utterance nearest to Alice's own embedding should be Alice
--- (self-similarity cosine distance = 0, all others > 0 for orthogonal vectors)
-SELECT is(
-    (SELECT u.speaker
-     FROM   utterances u
-     CROSS  JOIN (
-         SELECT embedding AS q
-         FROM   utterances
-         WHERE  meeting_id = 'vec_test_01' AND speaker = 'Alice'
-     ) alice_emb
-     WHERE  u.meeting_id = 'vec_test_01' AND u.embedding IS NOT NULL
-     ORDER  BY u.embedding <=> alice_emb.q
-     LIMIT  1),
-    'Alice',
-    'nearest utterance to Alice embedding should be Alice'
-);
-
--- Cosine ordering: utterance nearest to Bob's embedding should be Bob
-SELECT is(
-    (SELECT u.speaker
-     FROM   utterances u
-     CROSS  JOIN (
-         SELECT embedding AS q
-         FROM   utterances
-         WHERE  meeting_id = 'vec_test_01' AND speaker = 'Bob'
-     ) bob_emb
-     WHERE  u.meeting_id = 'vec_test_01' AND u.embedding IS NOT NULL
-     ORDER  BY u.embedding <=> bob_emb.q
-     LIMIT  1),
-    'Bob',
-    'nearest utterance to Bob embedding should be Bob'
 );
 
 -- Chunk ordering: chunk 0 nearest to its own embedding → chunk_index 0

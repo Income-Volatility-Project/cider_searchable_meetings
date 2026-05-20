@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(7);
+SELECT plan(5);
 
 -- 1. openai_embed_batch exists with correct signature
 SELECT has_function(
@@ -22,36 +22,14 @@ SELECT is(
     'openai_embed_batch with NULL input returns empty array'
 );
 
--- 4. embed_1_short_summary exists with correct signature
+-- 4. embed_1_meeting_batch exists with correct signature
 SELECT has_function(
-    'public', 'embed_1_short_summary',
-    ARRAY[]::TEXT[],
-    'embed_1_short_summary() should exist'
+    'public', 'embed_1_meeting_batch',
+    ARRAY['integer'],
+    'embed_1_meeting_batch(integer) should exist'
 );
 
--- 5. embed_1_utterance_batch exists with correct signature
-SELECT has_function(
-    'public', 'embed_1_utterance_batch',
-    ARRAY[]::TEXT[],
-    'embed_1_utterance_batch() should exist'
-);
-
--- 6. embed_1_utterance_batch with all utterances already embedded → (0, true, NULL)
-DO $$
-BEGIN
-    -- Temporarily set all utterances as embedded
-    UPDATE utterances SET embedding = array_fill(0::float, ARRAY[1536])::vector(1536)
-    WHERE embedding IS NULL;
-END;
-$$;
-
-SELECT results_eq(
-    'SELECT utterances_embedded, success, error_message FROM embed_1_utterance_batch()',
-    $$VALUES (0, true, NULL::TEXT)$$,
-    'embed_1_utterance_batch returns (0, true, NULL) when all utterances are embedded'
-);
-
--- 7. embed_1_short_summary with all summaries embedded → returns no rows
+-- 5. embed_1_meeting_batch with no unembedded meetings → (0, true, NULL)
 DO $$
 BEGIN
     UPDATE meetings
@@ -62,10 +40,10 @@ BEGIN
 END;
 $$;
 
-SELECT is(
-    (SELECT count(*)::INTEGER FROM embed_1_short_summary()),
-    0,
-    'embed_1_short_summary returns no rows when all summaries are embedded'
+SELECT results_eq(
+    'SELECT meetings_embedded, success, error_message FROM embed_1_meeting_batch()',
+    $$VALUES (0, true, NULL::TEXT)$$,
+    'embed_1_meeting_batch returns (0, true, NULL) when all meetings are embedded'
 );
 
 SELECT * FROM finish();

@@ -1,0 +1,19 @@
+{
+  "name": "cider-searchable-meetings",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts",
+    "start": "node src/server.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

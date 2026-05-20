@@ -8,8 +8,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <!-- Alpine.js: reactive UI -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
-  <!-- Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="shared.css">
   <style>
     /* Limit table from overflowing on small screens */
@@ -63,6 +61,47 @@
       text-overflow: ellipsis;
       margin: 0.1rem 0 0;
     }
+    .meeting-summary-link {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .nav-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .hidden-file-input {
+      display: none;
+    }
+    .help-button {
+      width: 2.25rem;
+      min-width: 2.25rem;
+      padding-left: 0;
+      padding-right: 0;
+      border-radius: 50%;
+      text-align: center;
+    }
+    .upload-button {
+      min-width: 6.5rem;
+    }
+    .upload-status {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+    }
+    .upload-errors {
+      margin-top: 0.5rem;
+      max-height: 10rem;
+      overflow: auto;
+    }
+    @media (max-width: 640px) {
+      .nav-actions {
+        gap: 0.4rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -72,6 +111,24 @@
     <header>
       <nav>
         <ul><li><strong>Meeting Search</strong></li></ul>
+        <ul>
+          <li class="nav-actions">
+            <input
+              x-ref="uploadInput"
+              class="hidden-file-input"
+              type="file"
+              accept=".csv,text/csv"
+              @change="selectUploadFile($event)"
+              :disabled="uploading"
+              aria-label="Meetings CSV file"
+            >
+            <button class="upload-button" @click="openUploadPicker()" :disabled="uploading">
+              <span x-show="!uploading">Upload</span>
+              <span x-show="uploading" aria-busy="true">Uploading</span>
+            </button>
+            <button class="secondary outline help-button" @click="showUploadHelp()" aria-label="Upload help">?</button>
+          </li>
+        </ul>
       </nav>
     </header>
 
@@ -84,12 +141,34 @@
       aria-label="Search"
     >
 
+    <dialog x-ref="uploadHelpDialog">
+      <article>
+        <header>
+          <button aria-label="Close" rel="prev" @click="closeUploadHelp()"></button>
+          <strong>Upload help</strong>
+        </header>
+        <p>Ask Simon for more info</p>
+      </article>
+    </dialog>
+
     <!-- ── Loading / error states ── -->
     <p x-show="loading" aria-busy="true">Loading…</p>
     <p x-show="error" style="color: var(--pico-del-color)">
       Error: <span x-text="error"></span>
       <br><small>Check the browser console (F12) for details. Make sure you're serving this page over HTTP, not opening it as a file://.</small>
     </p>
+    <p class="upload-status" x-show="uploadMessage" x-text="uploadMessage"></p>
+    <template x-if="uploadFailures.length > 0">
+      <article class="upload-errors">
+        <strong x-text="uploadFailures.length + ' failed row' + (uploadFailures.length === 1 ? '' : 's')"></strong>
+        <ul>
+          <template x-for="failure in uploadFailures.slice(0, 10)" :key="failure.row">
+            <li x-text="'Row ' + failure.row + ': ' + failure.message"></li>
+          </template>
+        </ul>
+        <small x-show="uploadFailures.length > 10" x-text="'Showing first 10 of ' + uploadFailures.length + ' failures.'"></small>
+      </article>
+    </template>
 
     <!-- ══════════════════════════════════════════════
          DEFAULT VIEW (no active search query)
@@ -125,7 +204,7 @@
             <thead>
               <tr>
                 <th style="width: 30%">Date</th>
-                <th>Name</th>
+                <th>Summary</th>
               </tr>
             </thead>
             <tbody>
@@ -133,7 +212,12 @@
                 <tr>
                   <td x-text="formatDate(meeting.date)"></td>
                   <td>
-                    <a :href="'meeting.html?id=' + encodeURIComponent(meeting.meeting_id)" x-text="meeting.meeting_name || 'Untitled'"></a>
+                    <a
+                      class="meeting-summary-link"
+                      :href="'meeting.html?id=' + encodeURIComponent(meeting.meeting_id)"
+                      :title="meeting.short_summary || 'No summary available'"
+                      x-text="meeting.short_summary || 'No summary available'"
+                    ></a>
                   </td>
                 </tr>
               </template>
@@ -240,6 +324,7 @@
   </main>
 
   <script src="config.js"></script>
+  <script src="api.js"></script>
   <script src="shared.js"></script>
   <script>
     // ── Page size for the meetings table ────────────────────────────────────
@@ -256,6 +341,12 @@
         allMeetings: [],
         page: 1,
         totalCount: 0,
+
+        // CSV upload state
+        uploadFile: null,
+        uploading: false,
+        uploadMessage: '',
+        uploadFailures: [],
 
         // Transcript search results
         utteranceResults: [],
@@ -308,7 +399,7 @@
           const to = from + PAGE_SIZE - 1
           const { data, count, error } = await db
             .from('meetings')
-            .select('meeting_id, meeting_name, date', { count: 'exact' })
+            .select('meeting_id, short_summary, date', { count: 'exact' })
             .order('date', { ascending: false })
             .range(from, to)
           if (error) throw new Error('loadMeetings: ' + error.message)
@@ -351,6 +442,83 @@
             this.loading = true
             await this.loadMeetings()
             this.loading = false
+          }
+        },
+
+        openUploadPicker() {
+          if (this.uploading) return
+          this.$refs.uploadInput.value = ''
+          this.$refs.uploadInput.click()
+        },
+
+        showUploadHelp() {
+          this.$refs.uploadHelpDialog.showModal()
+        },
+
+        closeUploadHelp() {
+          this.$refs.uploadHelpDialog.close()
+        },
+
+        selectUploadFile(event) {
+          this.uploadFile = event.target.files?.[0] || null
+          this.uploadFailures = []
+          this.uploadMessage = this.uploadFile ? `Ready to upload ${this.uploadFile.name}` : ''
+          if (this.uploadFile) this.uploadCsv()
+        },
+
+        async uploadCsv() {
+          if (!this.uploadFile || this.uploading) return
+
+          this.uploading = true
+          this.error = null
+          this.uploadFailures = []
+          this.uploadMessage = `Reading ${this.uploadFile.name}...`
+
+          try {
+            const text = await this.uploadFile.text()
+            const records = parseMeetingsCsv(text)
+            if (records.length === 0) {
+              this.uploadMessage = 'No meeting rows found.'
+              return
+            }
+
+            let uploaded = 0
+            let skipped = 0
+            let failed = 0
+
+            for (let index = 0; index < records.length; index++) {
+              const record = records[index]
+              this.uploadMessage = `Uploading ${index + 1} of ${records.length}...`
+              const result = await db.uploadArchive({
+                meeting_id: record.meeting_id,
+                summary: ensureHexPrefix(record.summary),
+                transcript: ensureHexPrefix(record.transcript),
+              })
+
+              if (result.ok && result.skipped) {
+                skipped++
+              } else if (result.ok) {
+                uploaded++
+              } else {
+                failed++
+                this.uploadFailures.push({
+                  row: record.row,
+                  message: result.message || 'Upload failed',
+                })
+              }
+            }
+
+            this.uploadMessage = `Done: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed.`
+            await Promise.all([
+              this.loadLatestMeeting(),
+              this.loadMeetings(),
+            ])
+          } catch (e) {
+            console.error('CSV upload failed:', e)
+            this.uploadMessage = ''
+            this.error = e.message || String(e)
+          } finally {
+            this.uploading = false
           }
         },
 
@@ -427,6 +595,86 @@
         speakerInitial,
         speakerColor,
       }
+    }
+
+    function ensureHexPrefix(value) {
+      return value.startsWith('\\x') ? value : `\\x${value}`
+    }
+
+    function parseMeetingsCsv(text) {
+      const rows = parseCsv(text)
+      if (rows.length === 0) return []
+
+      const header = rows[0].map((value) => value.trim())
+      const required = ['meeting_id', 'summary', 'transcript', 'creation_time']
+      for (let index = 0; index < required.length; index++) {
+        if (header[index] !== required[index]) {
+          throw new Error(`CSV header must start with: ${required.join(', ')}`)
+        }
+      }
+
+      const records = []
+      for (let index = 1; index < rows.length; index++) {
+        const row = rows[index]
+        if (row.every((value) => !value.trim())) continue
+
+        const record = {
+          row: index + 1,
+          meeting_id: (row[0] || '').trim(),
+          summary: (row[1] || '').trim(),
+          transcript: (row[2] || '').trim(),
+        }
+        if (!record.meeting_id) throw new Error(`Row ${record.row}: meeting_id is required`)
+        if (!record.summary) throw new Error(`Row ${record.row}: summary is required`)
+        if (!record.transcript) throw new Error(`Row ${record.row}: transcript is required`)
+        records.push(record)
+      }
+      return records
+    }
+
+    function parseCsv(text) {
+      const rows = []
+      let row = []
+      let field = ''
+      let inQuotes = false
+
+      for (let index = 0; index < text.length; index++) {
+        const char = text[index]
+        const next = text[index + 1]
+
+        if (inQuotes) {
+          if (char === '"' && next === '"') {
+            field += '"'
+            index++
+          } else if (char === '"') {
+            inQuotes = false
+          } else {
+            field += char
+          }
+          continue
+        }
+
+        if (char === '"') {
+          inQuotes = true
+        } else if (char === ',') {
+          row.push(field)
+          field = ''
+        } else if (char === '\n') {
+          row.push(field)
+          rows.push(row)
+          row = []
+          field = ''
+        } else if (char !== '\r') {
+          field += char
+        }
+      }
+
+      if (inQuotes) throw new Error('CSV contains an unterminated quoted field')
+      if (field || row.length > 0) {
+        row.push(field)
+        rows.push(row)
+      }
+      return rows
     }
   </script>
 </body>

@@ -1,23 +1,15 @@
 BEGIN;
 
-SELECT plan(3);
+SELECT plan(1);
 
-SELECT has_index(
-    'public', 'utterances',
-    'idx_utterances_unembedded',
-    'partial index exists on utterances(id) WHERE embedding IS NULL'
-);
+-- idx_utterances_unembedded and idx_meeting_summary_chunks_unembedded were
+-- dropped in migration 20260302100000_drop_utterance_embeddings.sql (CASCADE
+-- with utterances.embedding and explicit DROP respectively).
 
 SELECT has_index(
     'public', 'meetings',
     'idx_meetings_unembedded',
     'partial index exists on meetings(meeting_id) WHERE short_summary_embedding IS NULL'
-);
-
-SELECT has_index(
-    'public', 'meeting_summary_chunks',
-    'idx_meeting_summary_chunks_unembedded',
-    'partial index exists on meeting_summary_chunks(id) WHERE embedding IS NULL'
 );
 
 SELECT * FROM finish();
