@@ -97,6 +97,25 @@
       max-height: 10rem;
       overflow: auto;
     }
+    .filter-chips {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: -0.5rem 0 1rem;
+    }
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      width: auto;
+      margin: 0;
+      padding: 0.2rem 0.55rem;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .filter-chip span:last-child {
+      font-weight: 700;
+    }
     @media (max-width: 640px) {
       .nav-actions {
         gap: 0.4rem;
@@ -140,6 +159,12 @@
       @input.debounce.350ms="onSearch()"
       aria-label="Search"
     >
+    <div class="filter-chips" x-show="dateFilter">
+      <button class="secondary outline filter-chip" @click="removeDateFilter()" type="button" aria-label="Remove date filter">
+        <span x-text="'Date: ' + (dateFilter?.label || '')"></span>
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
 
     <dialog x-ref="uploadHelpDialog">
       <article>
@@ -243,6 +268,29 @@
     ═══════════════════════════════════════════════ -->
     <template x-if="query.trim() && !loading">
       <div>
+
+        <!-- Meeting result rows -->
+        <h2>Meeting Results
+          <small x-show="meetingResults.length > 0" x-text="'(' + meetingResults.length + ')'"></small>
+        </h2>
+        <template x-if="meetingResults.length === 0">
+          <p><em>No matching meeting summaries.</em></p>
+        </template>
+        <template x-if="meetingResults.length > 0">
+          <article>
+            <template x-for="m in meetingResults" :key="m.meeting_id">
+              <div class="result-row">
+                <div class="result-row-meta">
+                  <a :href="'meeting.html?id=' + encodeURIComponent(m.meeting_id)">
+                    <strong x-text="m.meeting_name || 'Untitled'"></strong>
+                  </a>
+                  <small x-text="formatDate(m.date)"></small>
+                </div>
+                <p class="result-row-summary" x-text="m.short_summary || 'No summary available'"></p>
+              </div>
+            </template>
+          </article>
+        </template>
 
         <!-- Transcript mention results -->
         <h2>Transcript Mentions
@@ -349,7 +397,9 @@
         uploadFailures: [],
 
         // Transcript search results
+        meetingResults: [],
         utteranceResults: [],
+        dateFilter: null,
 
         // Semantic search results (loaded in parallel with transcript search)
         semanticMeetingResults: [],
@@ -527,6 +577,8 @@
           // When query is cleared, reset everything and return to default view
           if (!this.query.trim()) {
             this.utteranceResults = []
+            this.meetingResults = []
+            this.dateFilter = null
             this.semanticMeetingResults = []
             this.semanticLoading = false
             this.expandedGroups = {}
@@ -540,19 +592,29 @@
           this.loading = true
           this.semanticLoading = true
           this.error = null
+          this.meetingResults = []
           this.utteranceResults = []
+          this.dateFilter = null
           this.semanticMeetingResults = []
 
           // Fire semantic search independently — it will resolve later without
           // blocking the transcript results from appearing.
           this._runSemantic(this.query, gen)
 
-          // Transcript search (fast — no embedding call)
+          // Keyword searches (fast — no embedding call)
           try {
-            const resp = await db.rpc('search_utterances', { query: this.query })
-            if (resp.error) throw new Error('search_utterances: ' + resp.error.message)
+            const [parseResp, meetingResp, utteranceResp] = await Promise.all([
+              db.rpc('parse_search_query', { query: this.query }),
+              db.rpc('search_meetings', { query: this.query }),
+              db.rpc('search_utterances', { query: this.query }),
+            ])
+            if (parseResp.error) throw new Error('parse_search_query: ' + parseResp.error.message)
+            if (meetingResp.error) throw new Error('search_meetings: ' + meetingResp.error.message)
+            if (utteranceResp.error) throw new Error('search_utterances: ' + utteranceResp.error.message)
             if (gen === this._searchGen) {
-              this.utteranceResults = resp.data || []
+              this.dateFilter = parseResp.data?.dateFilter || null
+              this.meetingResults = meetingResp.data || []
+              this.utteranceResults = utteranceResp.data || []
             }
           } catch (e) {
             console.error('Transcript search failed:', e)
@@ -582,6 +644,20 @@
 
         toggleGroup(id) {
           this.expandedGroups[id] = !this.expandedGroups[id]
+        },
+
+        removeDateFilter() {
+          if (!this.dateFilter) return
+          const phrase = this.dateFilter.phrase || ''
+          this.query = phrase
+            ? this.query
+                .replace(phrase, ' ')
+                .replace(/\b(?:on|in|during)\s*$/i, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+            : this.query
+          this.dateFilter = null
+          this.onSearch()
         },
 
         // ── Helpers ─────────────────────────────────────────────────────────

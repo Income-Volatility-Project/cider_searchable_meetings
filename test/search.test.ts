@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 
 import { createLocalDb } from "../src/db/local.ts";
 import {
+  parseSearchQuery,
   searchMeetings,
   searchMeetingsSemantic,
   searchUtterances,
@@ -105,6 +106,66 @@ test("empty full-text queries return no rows without touching the DB", async () 
   assert.deepEqual(searchUtterances(db as never, "  "), []);
   assert.deepEqual(searchMeetings(db as never, "\n\t"), []);
   assert.equal(db.calls.length, 0);
+});
+
+test("parseSearchQuery extracts simple date filters and leaves text query", () => {
+  assert.deepEqual(parseSearchQuery("budget Feb 2026"), {
+    textQuery: "budget",
+    dateFilter: {
+      start: "2026-02-01T05:00:00.000Z",
+      end: "2026-03-01T05:00:00.000Z",
+      label: "Feb 2026",
+      phrase: "Feb 2026",
+    },
+  });
+
+  assert.deepEqual(parseSearchQuery("planning 2026-02-16"), {
+    textQuery: "planning",
+    dateFilter: {
+      start: "2026-02-16T05:00:00.000Z",
+      end: "2026-02-17T05:00:00.000Z",
+      label: "Feb 16, 2026",
+      phrase: "2026-02-16",
+    },
+  });
+
+  assert.equal(parseSearchQuery("budget 20").dateFilter, null);
+});
+
+test("date filters add meeting date predicates to transcript search", () => {
+  const db = new RecordingDb();
+
+  searchUtterances(db as never, "budget Feb 2026");
+
+  assert.match(db.calls[0].sql, /m\.date >= \? AND m\.date < \?/);
+  assert.deepEqual(db.calls[0].params, [
+    '"budget"*',
+    "2026-02-01T05:00:00.000Z",
+    "2026-03-01T05:00:00.000Z",
+  ]);
+});
+
+test("date-only meeting search does not require FTS text", () => {
+  const db = new RecordingDb([
+    {
+      meeting_id: "meeting_1",
+      meeting_name: "Budget Review",
+      short_summary: "Budget planning",
+      full_summary: "The group discussed marketing expenditure.",
+      date: "2026-02-16T12:00:00.000Z",
+      rank: 0,
+    },
+  ]);
+
+  const rows = searchMeetings(db as never, "February 2026");
+
+  assert.equal(rows.length, 1);
+  assert.match(db.calls[0].sql, /FROM meetings m/);
+  assert.doesNotMatch(db.calls[0].sql, /meetings_fts MATCH/);
+  assert.deepEqual(db.calls[0].params, [
+    "2026-02-01T05:00:00.000Z",
+    "2026-03-01T05:00:00.000Z",
+  ]);
 });
 
 test("web-search OR is preserved as a SQLite FTS operator", () => {

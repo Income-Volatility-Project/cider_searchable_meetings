@@ -63,6 +63,25 @@ test('unsupported select and order columns fail clearly', async () => {
   assert.match(await response.text(), /Unsupported order column: bogus/)
 })
 
+test('parse_search_query exposes date filter metadata for the UI', async () => {
+  const response = await app.request('/rest/v1/rpc/parse_search_query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'budget Feb 2026' }),
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    textQuery: 'budget',
+    dateFilter: {
+      start: '2026-02-01T05:00:00.000Z',
+      end: '2026-03-01T05:00:00.000Z',
+      label: 'Feb 2026',
+      phrase: 'Feb 2026',
+    },
+  })
+})
+
 function toHexJson(value: unknown): string {
   return `\\x${Buffer.from(JSON.stringify(value), 'utf8').toString('hex')}`
 }

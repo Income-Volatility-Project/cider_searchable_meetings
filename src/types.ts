@@ -45,3 +45,15 @@ export type SearchMeetingResult = {
   date: string | null
   rank: number
 }
+
+export type SearchDateFilter = {
+  start: string
+  end: string
+  label: string
+  phrase: string
+}
+
+export type ParsedSearchQuery = {
+  textQuery: string
+  dateFilter: SearchDateFilter | null
+}
