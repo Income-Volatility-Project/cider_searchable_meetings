@@ -2,17 +2,8 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
-import { refreshSearchTerms } from '../search_terms.ts'
-
-export type SqlParams = Array<string | number | null>
-
-export type Db = {
-  exec(sql: string): void
-  all<T = Record<string, unknown>>(sql: string, params?: SqlParams): T[]
-  get<T = Record<string, unknown>>(sql: string, params?: SqlParams): T | null
-  run(sql: string, params?: SqlParams): { changes: number; lastInsertRowid: number | bigint }
-  transaction<T>(fn: () => T): T
-}
+import { refreshSearchTermsSync } from '../search_terms.ts'
+import type { Db, RunResult, SqlParams } from './types.ts'
 
 export class LocalDb implements Db {
   private readonly db: DatabaseSync
@@ -34,21 +25,36 @@ export class LocalDb implements Db {
     return (this.db.prepare(sql).get(...params) as T | undefined) ?? null
   }
 
-  run(sql: string, params: SqlParams = []): { changes: number; lastInsertRowid: number | bigint } {
+  run(sql: string, params: SqlParams = []): RunResult {
     const result = this.db.prepare(sql).run(...params)
     return { changes: Number(result.changes), lastInsertRowid: result.lastInsertRowid }
   }
 
-  transaction<T>(fn: () => T): T {
+  transaction<T>(fn: () => T | Promise<T>): T | Promise<T> {
     this.db.exec('BEGIN')
+    let value: T | Promise<T>
     try {
-      const value = fn()
-      this.db.exec('COMMIT')
-      return value
+      value = fn()
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
     }
+
+    if (isPromise(value)) {
+      return value.then(
+        (resolved) => {
+          this.db.exec('COMMIT')
+          return resolved
+        },
+        (error) => {
+          this.db.exec('ROLLBACK')
+          throw error
+        },
+      )
+    }
+
+    this.db.exec('COMMIT')
+    return value
   }
 }
 
@@ -57,6 +63,12 @@ export function createLocalDb(path = process.env.SQLITE_PATH ?? 'data/meetings.s
   const db = new LocalDb(path)
   const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
   db.exec(readFileSync(resolve(root, 'schema.sql'), 'utf8'))
-  refreshSearchTerms(db)
+  refreshSearchTermsSync(db)
   return db
+}
+
+export type { Db, SqlParams } from './types.ts'
+
+function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
+  return value !== null && typeof value === 'object' && typeof (value as Promise<T>).then === 'function'
 }

@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { createLocalDb } from "../src/db/local.ts";
-import { refreshSearchTerms } from "../src/search_terms.ts";
+import { refreshSearchTermsSync } from "../src/search_terms.ts";
 import {
   parseSearchQuery,
   searchMeetings,
@@ -44,7 +44,7 @@ test("search_utterances returns the UI/RPC row shape", async () => {
     },
   ]);
 
-  const rows = searchUtterances(db as never, "budget planning");
+  const rows = await searchUtterances(db as never, "budget planning");
 
   assert.deepEqual(rows, [
     {
@@ -78,7 +78,7 @@ test("search_meetings returns the UI/RPC row shape", async () => {
     },
   ]);
 
-  const rows = searchMeetings(db as never, "marketing expenditure");
+  const rows = await searchMeetings(db as never, "marketing expenditure");
 
   assert.deepEqual(rows, [
     {
@@ -105,8 +105,8 @@ test("search_meetings_semantic is a no-op SQLite stub", async () => {
 test("empty full-text queries return no rows without touching the DB", async () => {
   const db = new RecordingDb();
 
-  assert.deepEqual(searchUtterances(db as never, "  "), []);
-  assert.deepEqual(searchMeetings(db as never, "\n\t"), []);
+  assert.deepEqual(await searchUtterances(db as never, "  "), []);
+  assert.deepEqual(await searchMeetings(db as never, "\n\t"), []);
   assert.equal(db.calls.length, 0);
 });
 
@@ -134,10 +134,10 @@ test("parseSearchQuery extracts simple date filters and leaves text query", () =
   assert.equal(parseSearchQuery("budget 20").dateFilter, null);
 });
 
-test("date filters add meeting date predicates to transcript search", () => {
+test("date filters add meeting date predicates to transcript search", async () => {
   const db = new RecordingDb();
 
-  searchUtterances(db as never, "budget Feb 2026");
+  await searchUtterances(db as never, "budget Feb 2026");
 
   assert.match(db.calls[0].sql, /m\.date >= \? AND m\.date < \?/);
   assert.deepEqual(db.calls[0].params, [
@@ -147,7 +147,7 @@ test("date filters add meeting date predicates to transcript search", () => {
   ]);
 });
 
-test("date-only meeting search does not require FTS text", () => {
+test("date-only meeting search does not require FTS text", async () => {
   const db = new RecordingDb([
     {
       meeting_id: "meeting_1",
@@ -159,7 +159,7 @@ test("date-only meeting search does not require FTS text", () => {
     },
   ]);
 
-  const rows = searchMeetings(db as never, "February 2026");
+  const rows = await searchMeetings(db as never, "February 2026");
 
   assert.equal(rows.length, 1);
   assert.match(db.calls[0].sql, /FROM meetings m/);
@@ -170,15 +170,15 @@ test("date-only meeting search does not require FTS text", () => {
   ]);
 });
 
-test("web-search OR is preserved as a SQLite FTS operator", () => {
+test("web-search OR is preserved as a SQLite FTS operator", async () => {
   const db = new RecordingDb();
 
-  searchUtterances(db as never, "budget OR planning");
+  await searchUtterances(db as never, "budget OR planning");
 
   assert.deepEqual(db.calls[0].params, ['"budget"* OR "planning"*']);
 });
 
-test("prefix search matches incomplete words in SQLite FTS", () => {
+test("prefix search matches incomplete words in SQLite FTS", async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-search-")), "test.sqlite"));
 
   db.run("INSERT INTO archive (meeting_id, summary, transcript) VALUES (?, ?, ?)", ["meeting_1", null, null]);
@@ -202,37 +202,37 @@ test("prefix search matches incomplete words in SQLite FTS", () => {
     "The cortisol response was elevated.",
   ]);
 
-  const rows = searchUtterances(db, "Cortiso");
+  const rows = await searchUtterances(db, "Cortiso");
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].meeting_id, "meeting_1");
   assert.match(rows[0].text, /cortisol/i);
 });
 
-test("suggestSearchCorrections returns likely vocabulary terms for typos", () => {
+test("suggestSearchCorrections returns likely vocabulary terms for typos", async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
   insertSearchFixture(db);
 
-  const rows = suggestSearchCorrections(db, "cortsol");
+  const rows = await suggestSearchCorrections(db, "cortsol");
 
   assert.equal(rows[0]?.term, "cortisol");
   assert.ok(rows[0]?.score > 0.7);
 });
 
-test("suggestSearchCorrections skips exact, blank, and date-only queries", () => {
+test("suggestSearchCorrections skips exact, blank, and date-only queries", async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
   insertSearchFixture(db);
 
-  assert.deepEqual(suggestSearchCorrections(db, "cortisol"), []);
-  assert.deepEqual(suggestSearchCorrections(db, "  "), []);
-  assert.deepEqual(suggestSearchCorrections(db, "February 2026"), []);
+  assert.deepEqual(await suggestSearchCorrections(db, "cortisol"), []);
+  assert.deepEqual(await suggestSearchCorrections(db, "  "), []);
+  assert.deepEqual(await suggestSearchCorrections(db, "February 2026"), []);
 });
 
-test("suggestSearchCorrections dedupes multi-word candidates and respects limit", () => {
+test("suggestSearchCorrections dedupes multi-word candidates and respects limit", async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
   insertSearchFixture(db);
 
-  const rows = suggestSearchCorrections(db, "cortsol cortsol budgt", 1);
+  const rows = await suggestSearchCorrections(db, "cortsol cortsol budgt", 1);
 
   assert.equal(rows.length, 1);
   assert.equal(new Set(rows.map((row) => row.term)).size, rows.length);
@@ -264,5 +264,5 @@ function insertSearchFixture(db: ReturnType<typeof createLocalDb>): void {
     "meeting_1",
     "The cortisol response shaped the budget.",
   ]);
-  refreshSearchTerms(db);
+  refreshSearchTermsSync(db);
 }

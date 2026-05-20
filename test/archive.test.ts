@@ -8,7 +8,7 @@ import { ingestArchive } from '../src/archive.ts'
 import { createLocalDb } from '../src/db/local.ts'
 import { suggestSearchCorrections } from '../src/search.ts'
 
-test('ingestArchive inserts archive and derived meeting, utterance, chunk, and FTS rows', () => {
+test('ingestArchive inserts archive and derived meeting, utterance, chunk, and FTS rows', async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-')), 'test.sqlite'))
   const summary = {
     overallSummary: 'The group discussed budget planning.',
@@ -30,7 +30,7 @@ test('ingestArchive inserts archive and derived meeting, utterance, chunk, and F
     ].join('\n'),
   }
 
-  ingestArchive(db, {
+  await ingestArchive(db, {
     meeting_id: 'meeting_1',
     summary: toHexJson(summary),
     transcript: toHexJson(transcript),
@@ -44,10 +44,10 @@ test('ingestArchive inserts archive and derived meeting, utterance, chunk, and F
     db.get<{ count: number }>("SELECT count(*) AS count FROM utterances_fts WHERE utterances_fts MATCH 'budget'")?.count,
     1,
   )
-  assert.equal(suggestSearchCorrections(db, 'budgt')[0]?.term, 'budget')
+  assert.equal((await suggestSearchCorrections(db, 'budgt'))[0]?.term, 'budget')
 })
 
-test('ingestArchive rejects duplicate meeting ids', () => {
+test('ingestArchive rejects duplicate meeting ids', async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-')), 'test.sqlite'))
   const input = {
     meeting_id: 'meeting_1',
@@ -55,14 +55,14 @@ test('ingestArchive rejects duplicate meeting ids', () => {
     transcript: toHexJson({ vtt: '00:00:01.000 --> 00:00:02.000\nAlice: Hi' }),
   }
 
-  ingestArchive(db, input)
-  assert.throws(() => ingestArchive(db, input), /UNIQUE constraint failed/)
+  await ingestArchive(db, input)
+  await assert.rejects(() => ingestArchive(db, input), /UNIQUE constraint failed/)
 })
 
-test('ingestArchive preserves raw archive and meeting row when transcript parsing fails', () => {
+test('ingestArchive preserves raw archive and meeting row when transcript parsing fails', async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-')), 'test.sqlite'))
 
-  ingestArchive(db, {
+  await ingestArchive(db, {
     meeting_id: 'bad_transcript',
     summary: toHexJson({ overallSummary: 'Short', finalSummaryString: 'Full', topic: 'Topic' }),
     transcript: toHexJson({ vtt: '00:00:01.000 --> 00:00:02.000\nMissing speaker' }),

@@ -7,10 +7,10 @@ This repository contains a local meeting-search app built with Hono, SQLite, and
 ## Build, Test, and Development Commands
 
 - `npm install`: install runtime and TypeScript dependencies.
-- `npm run dev` or `npm start`: run the Hono server at `http://localhost:8787`.
+- `npm run dev` or `npm start`: run the Cloudflare Worker locally with Wrangler at `http://localhost:8787`.
 - `npm test`: run all Node test files under `test/`.
 - `npm run typecheck`: run `tsc --noEmit`.
-- `API_URL=http://localhost:8787 ./utils/batch_insert_archive.sh utils/meetings.csv`: import archive rows into the local server.
+- `API_URL=http://localhost:8787 ./utils/batch_insert_archive.sh utils/meetings.csv`: import archive rows into the local Wrangler Worker.
 
 The app requires Node 25 or newer for direct TypeScript execution and `node:sqlite`.
 

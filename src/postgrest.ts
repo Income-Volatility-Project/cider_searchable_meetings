@@ -1,5 +1,5 @@
 import type { Context } from 'hono'
-import type { Db, SqlParams } from './db/local.ts'
+import type { Db, SqlParams } from './db/types.ts'
 
 const ALLOWED_MEETING_COLUMNS = new Set([
   'meeting_id',
@@ -21,7 +21,7 @@ const ALLOWED_UTTERANCE_COLUMNS = new Set([
   'created_at',
 ])
 
-export function getMeetings(c: Context, db: Db): Response {
+export async function getMeetings(c: Context, db: Db): Promise<Response> {
   const url = new URL(c.req.url)
   const unsupported = unsupportedParams(url, ALLOWED_MEETING_COLUMNS)
   if (unsupported) return c.json({ message: `Unsupported query parameter: ${unsupported}` }, 400)
@@ -44,7 +44,7 @@ export function getMeetings(c: Context, db: Db): Response {
     return c.json({ message: error instanceof Error ? error.message : String(error) }, 400)
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
-  const rows = db.all(
+  const rows = await db.all(
     `
     SELECT ${columns} FROM meetings
     ${whereSql}
@@ -54,11 +54,11 @@ export function getMeetings(c: Context, db: Db): Response {
     [...params, limit, offset],
   )
 
-  const total = db.get<{ count: number }>(`SELECT count(*) AS count FROM meetings ${whereSql}`, params)?.count ?? rows.length
+  const total = (await db.get<{ count: number }>(`SELECT count(*) AS count FROM meetings ${whereSql}`, params))?.count ?? rows.length
   return postgrestJson(c, rows, total)
 }
 
-export function getUtterances(c: Context, db: Db): Response {
+export async function getUtterances(c: Context, db: Db): Promise<Response> {
   const url = new URL(c.req.url)
   const unsupported = unsupportedParams(url, ALLOWED_UTTERANCE_COLUMNS)
   if (unsupported) return c.json({ message: `Unsupported query parameter: ${unsupported}` }, 400)
@@ -81,7 +81,7 @@ export function getUtterances(c: Context, db: Db): Response {
     return c.json({ message: error instanceof Error ? error.message : String(error) }, 400)
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
-  const rows = db.all(
+  const rows = await db.all(
     `
     SELECT ${columns} FROM utterances
     ${whereSql}

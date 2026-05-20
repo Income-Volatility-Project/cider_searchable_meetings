@@ -3,9 +3,14 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { createApp } from '../src/app.ts'
+import { createLocalDb } from '../src/db/local.ts'
 
-process.env.SQLITE_PATH = join(mkdtempSync(join(tmpdir(), 'meetings-api-')), 'test.sqlite')
-const { default: app } = await import('../src/server.ts')
+const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-api-')), 'test.sqlite'))
+const app = createApp({
+  getDb: () => db,
+  allowAllOrigins: true,
+})
 
 test('archive upload accepts valid records and rejects duplicates', async () => {
   const payload = {
@@ -110,8 +115,47 @@ test('suggest_search_corrections exposes typo suggestions for the UI', async () 
   })
 
   assert.equal(response.status, 200)
-  const rows = await response.json()
+  const rows = (await response.json()) as Array<{ term?: string }>
   assert.equal(rows[0]?.term, 'cortisol')
+})
+
+test('API token protects DB-backed routes when configured', async () => {
+  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-auth-')), 'test.sqlite'))
+  const protectedApp = createApp({
+    getDb: () => db,
+    apiToken: 'secret-token',
+    allowAllOrigins: true,
+  })
+
+  let response = await protectedApp.request('/rest/v1/meetings')
+  assert.equal(response.status, 401)
+
+  response = await protectedApp.request('/rest/v1/meetings', {
+    headers: { Authorization: 'Bearer secret-token' },
+  })
+  assert.equal(response.status, 200)
+})
+
+test('CORS preflight only allows configured origins', async () => {
+  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-cors-')), 'test.sqlite'))
+  const corsApp = createApp({
+    getDb: () => db,
+    allowedOrigins: ['https://ui.example.test'],
+  })
+
+  let response = await corsApp.request('/rest/v1/meetings', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://ui.example.test' },
+  })
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://ui.example.test')
+
+  response = await corsApp.request('/rest/v1/meetings', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://other.example.test' },
+  })
+  assert.equal(response.status, 403)
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), null)
 })
 
 function toHexJson(value: unknown): string {

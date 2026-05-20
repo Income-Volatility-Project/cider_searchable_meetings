@@ -12,11 +12,17 @@
 # creation_time is ignored (not in schema)
 # =============================================================================
 
-# Configuration — read from env vars, with local-dev defaults
-SUPABASE_PROJECT_URL="${SUPABASE_URL:-http://localhost:54321}"
-SUPABASE_API_KEY="${SUPABASE_KEY:-sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH}"
+# Configuration — read from env vars, with local-dev defaults.
+# API_URL/POSTGREST_URL may point either at the service root or directly at /rest/v1.
+API_BASE_URL="${API_URL:-${POSTGREST_URL:-${SUPABASE_URL:-http://localhost:8787}}}"
+API_KEY="${API_KEY:-${SUPABASE_KEY:-}}"
 
-API_ENDPOINT="${SUPABASE_PROJECT_URL}/rest/v1/archive"
+API_BASE_URL="${API_BASE_URL%/}"
+if [[ "$API_BASE_URL" == */rest/v1 ]]; then
+    API_ENDPOINT="${API_BASE_URL}/archive"
+else
+    API_ENDPOINT="${API_BASE_URL}/rest/v1/archive"
+fi
 
 # =============================================================================
 
@@ -53,13 +59,21 @@ while IFS=',' read -r meeting_id summary_hex transcript_hex creation_time; do
     [ -z "$meeting_id" ] && continue
     ROW=$((ROW + 1))
 
-    RESPONSE=$(curl -s -w "\n%{http_code}" \
-        -X POST "$API_ENDPOINT" \
-        -H "apikey: $SUPABASE_API_KEY" \
-        -H "Authorization: Bearer $SUPABASE_API_KEY" \
-        -H "Content-Type: application/json" \
-        -H "Prefer: return=minimal" \
-        -d "{\"meeting_id\": \"$meeting_id\", \"summary\": \"\\\\x$summary_hex\", \"transcript\": \"\\\\x$transcript_hex\"}")
+    CURL_ARGS=(
+        -s -w "\n%{http_code}"
+        -X POST "$API_ENDPOINT"
+        -H "Content-Type: application/json"
+        -H "Prefer: return=minimal"
+        -d "{\"meeting_id\": \"$meeting_id\", \"summary\": \"\\\\x$summary_hex\", \"transcript\": \"\\\\x$transcript_hex\"}"
+    )
+    if [ -n "$API_KEY" ]; then
+        CURL_ARGS+=(
+            -H "apikey: $API_KEY"
+            -H "Authorization: Bearer $API_KEY"
+        )
+    fi
+
+    RESPONSE=$(curl "${CURL_ARGS[@]}")
 
     HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -1)
     BODY=$(printf '%s' "$RESPONSE" | sed '$d')

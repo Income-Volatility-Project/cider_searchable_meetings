@@ -1,4 +1,4 @@
-import type { Db } from './db/local.ts'
+import type { Db } from './db/types.ts'
 import type {
   ParsedSearchQuery,
   SearchCorrection,
@@ -22,13 +22,13 @@ const MONTHS: Array<{ short: string; long: string }> = [
   { short: 'Dec', long: 'December' },
 ]
 
-export function searchUtterances(db: Db, query: string): SearchUtteranceResult[] {
+export async function searchUtterances(db: Db, query: string): Promise<SearchUtteranceResult[]> {
   const parsed = parseSearchQuery(query)
   if (!parsed.textQuery) return []
 
   const params: Array<string | number | null> = [ftsQuery(parsed.textQuery)]
   const dateSql = dateFilterSql(parsed.dateFilter, params)
-  return db.all<SearchUtteranceResult>(
+  return await db.all<SearchUtteranceResult>(
     `
     SELECT
       u.id,
@@ -52,14 +52,14 @@ export function searchUtterances(db: Db, query: string): SearchUtteranceResult[]
   )
 }
 
-export function searchMeetings(db: Db, query: string): SearchMeetingResult[] {
+export async function searchMeetings(db: Db, query: string): Promise<SearchMeetingResult[]> {
   const parsed = parseSearchQuery(query)
   if (!parsed.textQuery && !parsed.dateFilter) return []
 
   const params: Array<string | number | null> = []
   const dateSql = dateFilterSql(parsed.dateFilter, params)
   if (!parsed.textQuery) {
-    return db.all<SearchMeetingResult>(
+    return await db.all<SearchMeetingResult>(
       `
       SELECT
         m.meeting_id,
@@ -78,7 +78,7 @@ export function searchMeetings(db: Db, query: string): SearchMeetingResult[] {
   }
 
   params.unshift(ftsQuery(parsed.textQuery))
-  return db.all<SearchMeetingResult>(
+  return await db.all<SearchMeetingResult>(
     `
     SELECT
       m.meeting_id,
@@ -101,7 +101,7 @@ export function searchMeetingsSemantic(): [] {
   return []
 }
 
-export function suggestSearchCorrections(db: Db, query: string, limit = 5): SearchCorrection[] {
+export async function suggestSearchCorrections(db: Db, query: string, limit = 5): Promise<SearchCorrection[]> {
   const parsed = parseSearchQuery(query)
   const terms = correctionQueryTerms(parsed.textQuery)
   if (terms.length === 0) return []
@@ -111,12 +111,12 @@ export function suggestSearchCorrections(db: Db, query: string, limit = 5): Sear
   const suggestions = new Map<string, SearchCorrection>()
 
   for (const term of terms) {
-    if (isKnownSearchTerm(db, term)) continue
+    if (await isKnownSearchTerm(db, term)) continue
 
     const trigramQuery = trigramFtsQuery(term)
     if (!trigramQuery) continue
 
-    const candidates = db.all<{ term: string; doc_count: number }>(
+    const candidates = await db.all<{ term: string; doc_count: number }>(
       `
       SELECT search_terms.term, search_terms.doc_count
       FROM search_terms_trigram
@@ -205,8 +205,8 @@ function normalizeCorrectionTerm(term: string): string {
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
 }
 
-function isKnownSearchTerm(db: Db, term: string): boolean {
-  return db.get<{ term: string }>('SELECT term FROM search_terms WHERE term = ? LIMIT 1', [term]) !== null
+async function isKnownSearchTerm(db: Db, term: string): Promise<boolean> {
+  return (await db.get<{ term: string }>('SELECT term FROM search_terms WHERE term = ? LIMIT 1', [term])) !== null
 }
 
 function trigramFtsQuery(term: string): string {
