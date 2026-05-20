@@ -2,6 +2,7 @@ import type { Db } from './db/local.ts'
 import { decodeArchiveValue, parseJsonObject } from './parsing/archive.ts'
 import { chunkFullSummary, parseSummaryObject } from './parsing/summary.ts'
 import { parseVtt } from './parsing/vtt.ts'
+import { refreshSearchTerms } from './search_terms.ts'
 import type { ArchiveInput, Meeting, Utterance } from './types.ts'
 
 export function ingestArchive(db: Db, input: ArchiveInput): void {
@@ -21,6 +22,7 @@ export function ingestArchive(db: Db, input: ArchiveInput): void {
     db.transaction(() => {
       rebuildDerivedRows(db, input.meeting_id, summaryText, transcriptText)
     })
+    refreshSearchTerms(db)
   } catch {
     // Match the old trigger path: preserve the raw archive row even if
     // downstream parsing fails. The insert endpoint still reports success.

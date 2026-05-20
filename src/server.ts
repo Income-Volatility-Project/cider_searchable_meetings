@@ -7,7 +7,13 @@ import { cors } from 'hono/cors'
 import { ingestArchive } from './archive.ts'
 import { createLocalDb } from './db/local.ts'
 import { getMeetings, getUtterances } from './postgrest.ts'
-import { parseSearchQuery, searchMeetings, searchMeetingsSemantic, searchUtterances } from './search.ts'
+import {
+  parseSearchQuery,
+  searchMeetings,
+  searchMeetingsSemantic,
+  searchUtterances,
+  suggestSearchCorrections,
+} from './search.ts'
 import type { ArchiveInput } from './types.ts'
 
 const db = createLocalDb()
@@ -54,6 +60,11 @@ app.post('/rest/v1/rpc/search_meetings', async (c) => {
 app.post('/rest/v1/rpc/parse_search_query', async (c) => {
   const body = await c.req.json().catch(() => ({}))
   return c.json(parseSearchQuery(String(body.query ?? '')))
+})
+
+app.post('/rest/v1/rpc/suggest_search_corrections', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  return c.json(suggestSearchCorrections(db, String(body.query ?? ''), Number(body.limit ?? 5)))
 })
 
 app.post('/rest/v1/rpc/search_meetings_semantic', (c) => c.json(searchMeetingsSemantic()))

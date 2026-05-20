@@ -5,11 +5,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { createLocalDb } from "../src/db/local.ts";
+import { refreshSearchTerms } from "../src/search_terms.ts";
 import {
   parseSearchQuery,
   searchMeetings,
   searchMeetingsSemantic,
   searchUtterances,
+  suggestSearchCorrections,
 } from "../src/search.ts";
 
 class RecordingDb {
@@ -206,3 +208,61 @@ test("prefix search matches incomplete words in SQLite FTS", () => {
   assert.equal(rows[0].meeting_id, "meeting_1");
   assert.match(rows[0].text, /cortisol/i);
 });
+
+test("suggestSearchCorrections returns likely vocabulary terms for typos", () => {
+  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
+  insertSearchFixture(db);
+
+  const rows = suggestSearchCorrections(db, "cortsol");
+
+  assert.equal(rows[0]?.term, "cortisol");
+  assert.ok(rows[0]?.score > 0.7);
+});
+
+test("suggestSearchCorrections skips exact, blank, and date-only queries", () => {
+  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
+  insertSearchFixture(db);
+
+  assert.deepEqual(suggestSearchCorrections(db, "cortisol"), []);
+  assert.deepEqual(suggestSearchCorrections(db, "  "), []);
+  assert.deepEqual(suggestSearchCorrections(db, "February 2026"), []);
+});
+
+test("suggestSearchCorrections dedupes multi-word candidates and respects limit", () => {
+  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), "meetings-corrections-")), "test.sqlite"));
+  insertSearchFixture(db);
+
+  const rows = suggestSearchCorrections(db, "cortsol cortsol budgt", 1);
+
+  assert.equal(rows.length, 1);
+  assert.equal(new Set(rows.map((row) => row.term)).size, rows.length);
+});
+
+function insertSearchFixture(db: ReturnType<typeof createLocalDb>): void {
+  db.run("INSERT INTO archive (meeting_id, summary, transcript) VALUES (?, ?, ?)", ["meeting_1", null, null]);
+  db.run(
+    `
+    INSERT INTO meetings (meeting_id, meeting_name, short_summary, full_summary, date)
+    VALUES (?, ?, ?, ?, ?)
+    `,
+    ["meeting_1", "Health Review", "Cortisol budget", "Cortisol planning and budget review.", "2026-02-16T12:00:00.000Z"],
+  );
+  db.run("INSERT INTO meetings_fts (meeting_id, short_summary, full_summary) VALUES (?, ?, ?)", [
+    "meeting_1",
+    "Cortisol budget",
+    "Cortisol planning and budget review.",
+  ]);
+  const result = db.run(
+    `
+    INSERT INTO utterances (meeting_id, start_time, end_time, duration, speaker, text)
+    VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    ["meeting_1", 1000, 5000, 4000, "Alice", "The cortisol response shaped the budget."],
+  );
+  db.run("INSERT INTO utterances_fts (utterance_id, meeting_id, text) VALUES (?, ?, ?)", [
+    Number(result.lastInsertRowid),
+    "meeting_1",
+    "The cortisol response shaped the budget.",
+  ]);
+  refreshSearchTerms(db);
+}

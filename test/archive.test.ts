@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { ingestArchive } from '../src/archive.ts'
 import { createLocalDb } from '../src/db/local.ts'
+import { suggestSearchCorrections } from '../src/search.ts'
 
 test('ingestArchive inserts archive and derived meeting, utterance, chunk, and FTS rows', () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-')), 'test.sqlite'))
@@ -43,6 +44,7 @@ test('ingestArchive inserts archive and derived meeting, utterance, chunk, and F
     db.get<{ count: number }>("SELECT count(*) AS count FROM utterances_fts WHERE utterances_fts MATCH 'budget'")?.count,
     1,
   )
+  assert.equal(suggestSearchCorrections(db, 'budgt')[0]?.term, 'budget')
 })
 
 test('ingestArchive rejects duplicate meeting ids', () => {

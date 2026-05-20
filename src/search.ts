@@ -1,5 +1,11 @@
 import type { Db } from './db/local.ts'
-import type { ParsedSearchQuery, SearchDateFilter, SearchMeetingResult, SearchUtteranceResult } from './types.ts'
+import type {
+  ParsedSearchQuery,
+  SearchCorrection,
+  SearchDateFilter,
+  SearchMeetingResult,
+  SearchUtteranceResult,
+} from './types.ts'
 
 const MONTHS: Array<{ short: string; long: string }> = [
   { short: 'Jan', long: 'January' },
@@ -95,9 +101,60 @@ export function searchMeetingsSemantic(): [] {
   return []
 }
 
+export function suggestSearchCorrections(db: Db, query: string, limit = 5): SearchCorrection[] {
+  const parsed = parseSearchQuery(query)
+  const terms = correctionQueryTerms(parsed.textQuery)
+  if (terms.length === 0) return []
+
+  const requestedLimit = Number.isFinite(limit) ? Math.floor(limit) : 5
+  const maxResults = Math.max(1, Math.min(requestedLimit, 20))
+  const suggestions = new Map<string, SearchCorrection>()
+
+  for (const term of terms) {
+    if (isKnownSearchTerm(db, term)) continue
+
+    const trigramQuery = trigramFtsQuery(term)
+    if (!trigramQuery) continue
+
+    const candidates = db.all<{ term: string; doc_count: number }>(
+      `
+      SELECT search_terms.term, search_terms.doc_count
+      FROM search_terms_trigram
+      JOIN search_terms ON search_terms.term = search_terms_trigram.term
+      WHERE search_terms_trigram MATCH ?
+      ORDER BY bm25(search_terms_trigram)
+      LIMIT ?
+      `,
+      [trigramQuery, maxResults * 20],
+    )
+
+    for (const candidate of candidates) {
+      const candidateTerm = candidate.term.toLowerCase()
+      if (candidateTerm === term) continue
+
+      const distance = editDistance(term, candidateTerm)
+      const longest = Math.max(term.length, candidateTerm.length)
+      if (longest === 0) continue
+
+      const similarity = 1 - distance / longest
+      if (similarity < 0.45) continue
+
+      const frequencyBoost = Math.min(Math.log10(Math.max(candidate.doc_count, 1)) / 10, 0.2)
+      const score = Number(Math.min(1, similarity + frequencyBoost).toFixed(4))
+      const existing = suggestions.get(candidateTerm)
+      if (!existing || score > existing.score) suggestions.set(candidateTerm, { term: candidate.term, score })
+    }
+  }
+
+  return Array.from(suggestions.values())
+    .sort((a, b) => b.score - a.score || a.term.localeCompare(b.term))
+    .slice(0, maxResults)
+}
+
 export const search_utterances = searchUtterances
 export const search_meetings = searchMeetings
 export const search_meetings_semantic = searchMeetingsSemantic
+export const suggest_search_corrections = suggestSearchCorrections
 
 export function parseSearchQuery(query: string): ParsedSearchQuery {
   const input = query.trim()
@@ -127,6 +184,61 @@ function ftsQuery(query: string): string {
   }
   if (cleaned[cleaned.length - 1] === 'OR') cleaned.pop()
   return cleaned.join(' ')
+}
+
+function correctionQueryTerms(query: string): string[] {
+  const seen = new Set<string>()
+  const terms: string[] = []
+  for (const rawTerm of query.trim().split(/\s+/)) {
+    const term = normalizeCorrectionTerm(rawTerm)
+    if (!term || term === 'or' || term.length < 3 || seen.has(term)) continue
+    seen.add(term)
+    terms.push(term)
+  }
+  return terms
+}
+
+function normalizeCorrectionTerm(term: string): string {
+  return term
+    .toLowerCase()
+    .replace(/["']/g, '')
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+}
+
+function isKnownSearchTerm(db: Db, term: string): boolean {
+  return db.get<{ term: string }>('SELECT term FROM search_terms WHERE term = ? LIMIT 1', [term]) !== null
+}
+
+function trigramFtsQuery(term: string): string {
+  const trigrams = new Set<string>()
+  for (let i = 0; i <= term.length - 3; i++) {
+    const trigram = term.slice(i, i + 3)
+    if (/^[a-z0-9]{3}$/.test(trigram)) trigrams.add(trigram)
+  }
+  return Array.from(trigrams)
+    .map((trigram) => `"${trigram}"`)
+    .join(' OR ')
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0
+  if (a.length === 0) return b.length
+  if (b.length === 0) return a.length
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i]
+    for (let j = 1; j <= b.length; j++) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + substitutionCost,
+      )
+    }
+    previous = current
+  }
+  return previous[b.length]
 }
 
 function dateFilterSql(filter: SearchDateFilter | null, params: Array<string | number | null>): string {

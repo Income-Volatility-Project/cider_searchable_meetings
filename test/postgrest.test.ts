@@ -82,6 +82,38 @@ test('parse_search_query exposes date filter metadata for the UI', async () => {
   })
 })
 
+test('suggest_search_corrections exposes typo suggestions for the UI', async () => {
+  const payload = {
+    meeting_id: 'api_correction_meeting',
+    summary: toHexJson({
+      overallSummary: 'The group discussed cortisol measurements.',
+      finalSummaryString: 'Cortisol measurements were reviewed.',
+      topic: 'Health Review',
+    }),
+    transcript: toHexJson({ vtt: '00:00:01.000 --> 00:00:02.000\nAlice: Cortisol came up again.' }),
+  }
+
+  const upload = await app.request('/rest/v1/archive', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify(payload),
+  })
+  assert.equal(upload.status, 201)
+
+  const response = await app.request('/rest/v1/rpc/suggest_search_corrections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'cortsol', limit: 5 }),
+  })
+
+  assert.equal(response.status, 200)
+  const rows = await response.json()
+  assert.equal(rows[0]?.term, 'cortisol')
+})
+
 function toHexJson(value: unknown): string {
   return `\\x${Buffer.from(JSON.stringify(value), 'utf8').toString('hex')}`
 }

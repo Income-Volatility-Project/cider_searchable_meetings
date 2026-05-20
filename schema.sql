@@ -56,3 +56,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS utterances_fts USING fts5(
   text,
   tokenize = 'porter'
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS meetings_vocab USING fts5vocab(meetings_fts, 'row');
+CREATE VIRTUAL TABLE IF NOT EXISTS utterances_vocab USING fts5vocab(utterances_fts, 'row');
+
+CREATE TABLE IF NOT EXISTS search_terms (
+  term TEXT PRIMARY KEY,
+  doc_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS search_terms_trigram USING fts5(
+  term,
+  tokenize = 'trigram'
+);

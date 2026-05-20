@@ -159,11 +159,25 @@
       @input.debounce.350ms="onSearch()"
       aria-label="Search"
     >
-    <div class="filter-chips" x-show="dateFilter">
-      <button class="secondary outline filter-chip" @click="removeDateFilter()" type="button" aria-label="Remove date filter">
+    <div class="filter-chips" x-show="dateFilter || searchCorrections.length > 0">
+      <button
+        class="secondary outline filter-chip"
+        x-show="dateFilter"
+        @click="removeDateFilter()"
+        type="button"
+        aria-label="Remove date filter"
+      >
         <span x-text="'Date: ' + (dateFilter?.label || '')"></span>
         <span aria-hidden="true">×</span>
       </button>
+      <template x-for="correction in searchCorrections" :key="correction.term">
+        <button
+          class="secondary outline filter-chip"
+          @click="applySearchCorrection(correction.term)"
+          type="button"
+          x-text="correction.term"
+        ></button>
+      </template>
     </div>
 
     <dialog x-ref="uploadHelpDialog">
@@ -278,7 +292,7 @@
         </template>
         <template x-if="meetingResults.length > 0">
           <article>
-            <template x-for="m in meetingResults" :key="m.meeting_id">
+            <template x-for="m in visibleMeetingResults" :key="m.meeting_id">
               <div class="result-row">
                 <div class="result-row-meta">
                   <a :href="'meeting.html?id=' + encodeURIComponent(m.meeting_id)">
@@ -289,6 +303,11 @@
                 <p class="result-row-summary" x-text="m.short_summary || 'No summary available'"></p>
               </div>
             </template>
+            <footer x-show="!showAllMeetingResults && meetingResults.length > RESULT_PREVIEW_LIMIT">
+              <button class="secondary outline" type="button" @click="showAllMeetingResults = true">
+                <span x-text="'Show more (' + (meetingResults.length - RESULT_PREVIEW_LIMIT) + ')'"></span>
+              </button>
+            </footer>
           </article>
         </template>
 
@@ -301,7 +320,7 @@
         </template>
         <template x-if="utteranceResults.length > 0">
           <div>
-            <template x-for="group in groupedUtterances" :key="group.meeting_id">
+            <template x-for="group in visibleGroupedUtterances" :key="group.meeting_id">
               <article>
                 <header>
                   <a :href="'meeting.html?id=' + encodeURIComponent(group.meeting_id)">
@@ -331,6 +350,14 @@
                 </template>
               </article>
             </template>
+            <button
+              class="secondary outline"
+              x-show="!showAllTranscriptResults && groupedUtterances.length > RESULT_PREVIEW_LIMIT"
+              type="button"
+              @click="showAllTranscriptResults = true"
+            >
+              <span x-text="'Show more (' + (groupedUtterances.length - RESULT_PREVIEW_LIMIT) + ')'"></span>
+            </button>
           </div>
         </template>
 
@@ -377,6 +404,7 @@
   <script>
     // ── Page size for the meetings table ────────────────────────────────────
     const PAGE_SIZE = 10
+    const RESULT_PREVIEW_LIMIT = 5
 
     // ── Alpine component ─────────────────────────────────────────────────────
     function searchApp() {
@@ -399,7 +427,10 @@
         // Transcript search results
         meetingResults: [],
         utteranceResults: [],
+        showAllMeetingResults: false,
+        showAllTranscriptResults: false,
         dateFilter: null,
+        searchCorrections: [],
 
         // Semantic search results (loaded in parallel with transcript search)
         semanticMeetingResults: [],
@@ -471,6 +502,14 @@
             g.utterances.sort((a, b) => (a.start_time || 0) - (b.start_time || 0))
           }
           return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date))
+        },
+
+        get visibleMeetingResults() {
+          return this.showAllMeetingResults ? this.meetingResults : this.meetingResults.slice(0, RESULT_PREVIEW_LIMIT)
+        },
+
+        get visibleGroupedUtterances() {
+          return this.showAllTranscriptResults ? this.groupedUtterances : this.groupedUtterances.slice(0, RESULT_PREVIEW_LIMIT)
         },
 
         get totalPages() {
@@ -578,7 +617,10 @@
           if (!this.query.trim()) {
             this.utteranceResults = []
             this.meetingResults = []
+            this.showAllMeetingResults = false
+            this.showAllTranscriptResults = false
             this.dateFilter = null
+            this.searchCorrections = []
             this.semanticMeetingResults = []
             this.semanticLoading = false
             this.expandedGroups = {}
@@ -594,7 +636,10 @@
           this.error = null
           this.meetingResults = []
           this.utteranceResults = []
+          this.showAllMeetingResults = false
+          this.showAllTranscriptResults = false
           this.dateFilter = null
+          this.searchCorrections = []
           this.semanticMeetingResults = []
 
           // Fire semantic search independently — it will resolve later without
@@ -612,9 +657,19 @@
             if (meetingResp.error) throw new Error('search_meetings: ' + meetingResp.error.message)
             if (utteranceResp.error) throw new Error('search_utterances: ' + utteranceResp.error.message)
             if (gen === this._searchGen) {
+              const meetingResults = meetingResp.data || []
+              const utteranceResults = utteranceResp.data || []
               this.dateFilter = parseResp.data?.dateFilter || null
-              this.meetingResults = meetingResp.data || []
-              this.utteranceResults = utteranceResp.data || []
+              this.meetingResults = meetingResults
+              this.utteranceResults = utteranceResults
+
+              const correctionResp = await db.rpc('suggest_search_corrections', { query: this.query, limit: 5 })
+              if (gen !== this._searchGen) return
+              if (correctionResp.error) {
+                console.warn('Search correction failed (non-fatal):', correctionResp.error.message)
+              } else {
+                this.searchCorrections = correctionResp.data || []
+              }
             }
           } catch (e) {
             console.error('Transcript search failed:', e)
@@ -657,6 +712,12 @@
                 .trim()
             : this.query
           this.dateFilter = null
+          this.onSearch()
+        },
+
+        applySearchCorrection(term) {
+          this.query = term
+          this.searchCorrections = []
           this.onSearch()
         },
 

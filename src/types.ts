@@ -57,3 +57,8 @@ export type ParsedSearchQuery = {
   textQuery: string
   dateFilter: SearchDateFilter | null
 }
+
+export type SearchCorrection = {
+  term: string
+  score: number
+}

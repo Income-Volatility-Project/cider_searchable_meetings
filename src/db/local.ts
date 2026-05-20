@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { refreshSearchTerms } from '../search_terms.ts'
 
 export type SqlParams = Array<string | number | null>
 
@@ -56,5 +57,6 @@ export function createLocalDb(path = process.env.SQLITE_PATH ?? 'data/meetings.s
   const db = new LocalDb(path)
   const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
   db.exec(readFileSync(resolve(root, 'schema.sql'), 'utf8'))
+  refreshSearchTerms(db)
   return db
 }
