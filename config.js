@@ -1,2 +1,1 @@
-window.SUPABASE_URL='https://qhtklcknortafhljjvwu.supabase.co';
-window.SUPABASE_KEY='sb_publishable_92SUHnfI4qqanriQC55MmQ_cYMMJuhN';
+window.API_URL='https://cider-searchable-meetings-api.mulat-simon.workers.dev';
