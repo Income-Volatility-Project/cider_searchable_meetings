@@ -23,7 +23,7 @@ jobs:
 
       - name: Generate config.js
         run: |
-          echo "window.API_URL='${{ secrets.SUPABASE_URL }}';" > ui/config.js
+          echo "window.API_URL='${{ secrets.API_URL }}';" > ui/config.js
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
