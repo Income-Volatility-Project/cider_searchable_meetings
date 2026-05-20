@@ -119,23 +119,6 @@ test('suggest_search_corrections exposes typo suggestions for the UI', async () 
   assert.equal(rows[0]?.term, 'cortisol')
 })
 
-test('API token protects DB-backed routes when configured', async () => {
-  const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-auth-')), 'test.sqlite'))
-  const protectedApp = createApp({
-    getDb: () => db,
-    apiToken: 'secret-token',
-    allowAllOrigins: true,
-  })
-
-  let response = await protectedApp.request('/rest/v1/meetings')
-  assert.equal(response.status, 401)
-
-  response = await protectedApp.request('/rest/v1/meetings', {
-    headers: { Authorization: 'Bearer secret-token' },
-  })
-  assert.equal(response.status, 200)
-})
-
 test('CORS preflight only allows configured origins', async () => {
   const db = createLocalDb(join(mkdtempSync(join(tmpdir(), 'meetings-cors-')), 'test.sqlite'))
   const corsApp = createApp({

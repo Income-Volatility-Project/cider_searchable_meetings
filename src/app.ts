@@ -14,7 +14,6 @@ import type { ArchiveInput } from './types.ts'
 export type WorkerBindings = {
   DB: D1Database
   ALLOWED_ORIGINS?: string
-  WORKER_API_TOKEN?: string
 }
 
 type AppContext = Context<{ Bindings: WorkerBindings }>
@@ -24,7 +23,6 @@ export type AppOptions = {
   getDb: (c: AppContext) => MaybePromise<Db>
   allowedOrigins?: string[]
   allowAllOrigins?: boolean
-  apiToken?: string
 }
 
 export function createApp(options: AppOptions): Hono<{ Bindings: WorkerBindings }> {
@@ -36,7 +34,7 @@ export function createApp(options: AppOptions): Hono<{ Bindings: WorkerBindings 
     if (allowedOrigin) {
       c.header('Access-Control-Allow-Origin', allowedOrigin)
       c.header('Vary', 'Origin')
-      c.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Prefer, Range, apikey')
+      c.header('Access-Control-Allow-Headers', 'Content-Type, Prefer, Range')
       c.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       c.header('Access-Control-Expose-Headers', 'Content-Range')
     }
@@ -46,13 +44,6 @@ export function createApp(options: AppOptions): Hono<{ Bindings: WorkerBindings 
     }
 
     await next()
-  })
-
-  app.use('/rest/v1/*', async (c, next) => {
-    const token = configuredApiToken(c, options)
-    if (!token) return next()
-    if (requestToken(c) !== token) return c.json({ message: 'Unauthorized' }, 401)
-    return next()
   })
 
   app.post('/rest/v1/archive', async (c) => {
@@ -111,10 +102,6 @@ function configuredOrigins(c: AppContext, options: AppOptions): string[] {
   return splitConfig(c.env?.ALLOWED_ORIGINS)
 }
 
-function configuredApiToken(c: AppContext, options: AppOptions): string | undefined {
-  return options.apiToken ?? c.env?.WORKER_API_TOKEN
-}
-
 function splitConfig(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')
@@ -126,10 +113,4 @@ function allowedCorsOrigin(origin: string | undefined, allowedOrigins: string[],
   if (!origin) return null
   if (allowedOrigins.length === 0) return allowAll ? origin : null
   return allowedOrigins.includes(origin) ? origin : null
-}
-
-function requestToken(c: AppContext): string | null {
-  const authorization = c.req.header('authorization') ?? ''
-  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]
-  return bearer ?? c.req.header('apikey') ?? null
 }

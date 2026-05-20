@@ -1,19 +1,17 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "cider-searchable-meetings-api",
-  "main": "src/worker.ts",
-  "compatibility_date": "2026-05-20",
-  "vars": {
-    // Replace with the deployed UI origin before deploying.
-    "ALLOWED_ORIGINS": "https://example-ui.pages.dev"
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "cider-searchable-meetings",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "preview_database_id": "local-cider-searchable-meetings",
-      "migrations_dir": "migrations"
-    }
-  ]
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cider-searchable-meetings-api",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-05-20",
+	"vars": {
+		// Replace with the deployed UI origin before deploying.
+		"ALLOWED_ORIGINS": "https://income-volatility-project.github.io/cider_searchable_meetings"
+	},
+	"d1_databases": [
+		{
+			"binding": "cider_searchable_meetings",
+			"database_name": "cider_searchable_meetings",
+			"database_id": "33f51c31-06cf-442e-948d-2e79df4a8785"
+		}
+	]
 }

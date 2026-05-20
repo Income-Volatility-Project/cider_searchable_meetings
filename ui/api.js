@@ -2,7 +2,6 @@
 // It intentionally implements only the subset of the Supabase client API used here.
 (function () {
   const apiBase = (window.API_URL || window.POSTGREST_URL || window.location.origin).replace(/\/$/, '')
-  const apiKey = window.API_KEY || window.SUPABASE_KEY || ''
 
   function restBase() {
     if (!apiBase) throw new Error('API_URL or SUPABASE_URL must be configured')
@@ -10,12 +9,7 @@
   }
 
   function headers(extra = {}) {
-    const out = { ...extra }
-    if (apiKey) {
-      out.apikey = apiKey
-      out.Authorization = `Bearer ${apiKey}`
-    }
-    return out
+    return { ...extra }
   }
 
   async function toResult(response, { maybeSingle = false, wantCount = false } = {}) {

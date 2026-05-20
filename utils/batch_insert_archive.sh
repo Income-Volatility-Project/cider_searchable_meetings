@@ -15,7 +15,6 @@
 # Configuration — read from env vars, with local-dev defaults.
 # API_URL/POSTGREST_URL may point either at the service root or directly at /rest/v1.
 API_BASE_URL="${API_URL:-${POSTGREST_URL:-${SUPABASE_URL:-http://localhost:8787}}}"
-API_KEY="${API_KEY:-${SUPABASE_KEY:-}}"
 
 API_BASE_URL="${API_BASE_URL%/}"
 if [[ "$API_BASE_URL" == */rest/v1 ]]; then
@@ -66,12 +65,6 @@ while IFS=',' read -r meeting_id summary_hex transcript_hex creation_time; do
         -H "Prefer: return=minimal"
         -d "{\"meeting_id\": \"$meeting_id\", \"summary\": \"\\\\x$summary_hex\", \"transcript\": \"\\\\x$transcript_hex\"}"
     )
-    if [ -n "$API_KEY" ]; then
-        CURL_ARGS+=(
-            -H "apikey: $API_KEY"
-            -H "Authorization: Bearer $API_KEY"
-        )
-    fi
 
     RESPONSE=$(curl "${CURL_ARGS[@]}")
 
