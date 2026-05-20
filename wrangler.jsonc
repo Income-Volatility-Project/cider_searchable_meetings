@@ -1,0 +1,17 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cider-searchable-meetings-api",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-05-20",
+	"vars": {
+		// Replace with the deployed UI origin before deploying.
+		"ALLOWED_ORIGINS": "https://income-volatility-project.github.io/cider_searchable_meetings"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "cider_searchable_meetings",
+			"database_id": "33f51c31-06cf-442e-948d-2e79df4a8785"
+		}
+	]
+}

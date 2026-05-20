@@ -8,8 +8,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <!-- Alpine.js: reactive UI -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
-  <!-- Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="shared.css">
   <style>
     /* Limit table from overflowing on small screens */
@@ -63,6 +61,66 @@
       text-overflow: ellipsis;
       margin: 0.1rem 0 0;
     }
+    .meeting-summary-link {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .nav-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .hidden-file-input {
+      display: none;
+    }
+    .help-button {
+      width: 2.25rem;
+      min-width: 2.25rem;
+      padding-left: 0;
+      padding-right: 0;
+      border-radius: 50%;
+      text-align: center;
+    }
+    .upload-button {
+      min-width: 6.5rem;
+    }
+    .upload-status {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+    }
+    .upload-errors {
+      margin-top: 0.5rem;
+      max-height: 10rem;
+      overflow: auto;
+    }
+    .filter-chips {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: -0.5rem 0 1rem;
+    }
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      width: auto;
+      margin: 0;
+      padding: 0.2rem 0.55rem;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .filter-chip span:last-child {
+      font-weight: 700;
+    }
+    @media (max-width: 640px) {
+      .nav-actions {
+        gap: 0.4rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -72,6 +130,24 @@
     <header>
       <nav>
         <ul><li><strong>Meeting Search</strong></li></ul>
+        <ul>
+          <li class="nav-actions">
+            <input
+              x-ref="uploadInput"
+              class="hidden-file-input"
+              type="file"
+              accept=".csv,text/csv"
+              @change="selectUploadFile($event)"
+              :disabled="uploading"
+              aria-label="Meetings CSV file"
+            >
+            <button class="upload-button" @click="openUploadPicker()" :disabled="uploading">
+              <span x-show="!uploading">Upload</span>
+              <span x-show="uploading" aria-busy="true">Uploading</span>
+            </button>
+            <button class="secondary outline help-button" @click="showUploadHelp()" aria-label="Upload help">?</button>
+          </li>
+        </ul>
       </nav>
     </header>
 
@@ -83,6 +159,36 @@
       @input.debounce.350ms="onSearch()"
       aria-label="Search"
     >
+    <div class="filter-chips" x-show="dateFilter || searchCorrections.length > 0">
+      <button
+        class="secondary outline filter-chip"
+        x-show="dateFilter"
+        @click="removeDateFilter()"
+        type="button"
+        aria-label="Remove date filter"
+      >
+        <span x-text="'Date: ' + (dateFilter?.label || '')"></span>
+        <span aria-hidden="true">×</span>
+      </button>
+      <template x-for="correction in searchCorrections" :key="correction.term">
+        <button
+          class="secondary outline filter-chip"
+          @click="applySearchCorrection(correction.term)"
+          type="button"
+          x-text="correction.term"
+        ></button>
+      </template>
+    </div>
+
+    <dialog x-ref="uploadHelpDialog">
+      <article>
+        <header>
+          <button aria-label="Close" rel="prev" @click="closeUploadHelp()"></button>
+          <strong>Upload help</strong>
+        </header>
+        <p>Ask Simon for more info</p>
+      </article>
+    </dialog>
 
     <!-- ── Loading / error states ── -->
     <p x-show="loading" aria-busy="true">Loading…</p>
@@ -90,6 +196,18 @@
       Error: <span x-text="error"></span>
       <br><small>Check the browser console (F12) for details. Make sure you're serving this page over HTTP, not opening it as a file://.</small>
     </p>
+    <p class="upload-status" x-show="uploadMessage" x-text="uploadMessage"></p>
+    <template x-if="uploadFailures.length > 0">
+      <article class="upload-errors">
+        <strong x-text="uploadFailures.length + ' failed row' + (uploadFailures.length === 1 ? '' : 's')"></strong>
+        <ul>
+          <template x-for="failure in uploadFailures.slice(0, 10)" :key="failure.row">
+            <li x-text="'Row ' + failure.row + ': ' + failure.message"></li>
+          </template>
+        </ul>
+        <small x-show="uploadFailures.length > 10" x-text="'Showing first 10 of ' + uploadFailures.length + ' failures.'"></small>
+      </article>
+    </template>
 
     <!-- ══════════════════════════════════════════════
          DEFAULT VIEW (no active search query)
@@ -125,7 +243,7 @@
             <thead>
               <tr>
                 <th style="width: 30%">Date</th>
-                <th>Name</th>
+                <th>Summary</th>
               </tr>
             </thead>
             <tbody>
@@ -133,7 +251,12 @@
                 <tr>
                   <td x-text="formatDate(meeting.date)"></td>
                   <td>
-                    <a :href="'meeting.html?id=' + encodeURIComponent(meeting.meeting_id)" x-text="meeting.meeting_name || 'Untitled'"></a>
+                    <a
+                      class="meeting-summary-link"
+                      :href="'meeting.html?id=' + encodeURIComponent(meeting.meeting_id)"
+                      :title="meeting.short_summary || 'No summary available'"
+                      x-text="meeting.short_summary || 'No summary available'"
+                    ></a>
                   </td>
                 </tr>
               </template>
@@ -160,6 +283,34 @@
     <template x-if="query.trim() && !loading">
       <div>
 
+        <!-- Meeting result rows -->
+        <h2>Meeting Results
+          <small x-show="meetingResults.length > 0" x-text="'(' + meetingResults.length + ')'"></small>
+        </h2>
+        <template x-if="meetingResults.length === 0">
+          <p><em>No matching meeting summaries.</em></p>
+        </template>
+        <template x-if="meetingResults.length > 0">
+          <article>
+            <template x-for="m in visibleMeetingResults" :key="m.meeting_id">
+              <div class="result-row">
+                <div class="result-row-meta">
+                  <a :href="'meeting.html?id=' + encodeURIComponent(m.meeting_id)">
+                    <strong x-text="m.meeting_name || 'Untitled'"></strong>
+                  </a>
+                  <small x-text="formatDate(m.date)"></small>
+                </div>
+                <p class="result-row-summary" x-text="m.short_summary || 'No summary available'"></p>
+              </div>
+            </template>
+            <footer x-show="!showAllMeetingResults && meetingResults.length > RESULT_PREVIEW_LIMIT">
+              <button class="secondary outline" type="button" @click="showAllMeetingResults = true">
+                <span x-text="'Show more (' + (meetingResults.length - RESULT_PREVIEW_LIMIT) + ')'"></span>
+              </button>
+            </footer>
+          </article>
+        </template>
+
         <!-- Transcript mention results -->
         <h2>Transcript Mentions
           <small x-show="utteranceResults.length > 0" x-text="'(' + utteranceResults.length + ')'"></small>
@@ -169,7 +320,7 @@
         </template>
         <template x-if="utteranceResults.length > 0">
           <div>
-            <template x-for="group in groupedUtterances" :key="group.meeting_id">
+            <template x-for="group in visibleGroupedUtterances" :key="group.meeting_id">
               <article>
                 <header>
                   <a :href="'meeting.html?id=' + encodeURIComponent(group.meeting_id)">
@@ -199,6 +350,14 @@
                 </template>
               </article>
             </template>
+            <button
+              class="secondary outline"
+              x-show="!showAllTranscriptResults && groupedUtterances.length > RESULT_PREVIEW_LIMIT"
+              type="button"
+              @click="showAllTranscriptResults = true"
+            >
+              <span x-text="'Show more (' + (groupedUtterances.length - RESULT_PREVIEW_LIMIT) + ')'"></span>
+            </button>
           </div>
         </template>
 
@@ -240,10 +399,12 @@
   </main>
 
   <script src="config.js"></script>
+  <script src="api.js"></script>
   <script src="shared.js"></script>
   <script>
     // ── Page size for the meetings table ────────────────────────────────────
     const PAGE_SIZE = 10
+    const RESULT_PREVIEW_LIMIT = 5
 
     // ── Alpine component ─────────────────────────────────────────────────────
     function searchApp() {
@@ -257,8 +418,19 @@
         page: 1,
         totalCount: 0,
 
+        // CSV upload state
+        uploadFile: null,
+        uploading: false,
+        uploadMessage: '',
+        uploadFailures: [],
+
         // Transcript search results
+        meetingResults: [],
         utteranceResults: [],
+        showAllMeetingResults: false,
+        showAllTranscriptResults: false,
+        dateFilter: null,
+        searchCorrections: [],
 
         // Semantic search results (loaded in parallel with transcript search)
         semanticMeetingResults: [],
@@ -308,7 +480,7 @@
           const to = from + PAGE_SIZE - 1
           const { data, count, error } = await db
             .from('meetings')
-            .select('meeting_id, meeting_name, date', { count: 'exact' })
+            .select('meeting_id, short_summary, date', { count: 'exact' })
             .order('date', { ascending: false })
             .range(from, to)
           if (error) throw new Error('loadMeetings: ' + error.message)
@@ -330,6 +502,14 @@
             g.utterances.sort((a, b) => (a.start_time || 0) - (b.start_time || 0))
           }
           return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date))
+        },
+
+        get visibleMeetingResults() {
+          return this.showAllMeetingResults ? this.meetingResults : this.meetingResults.slice(0, RESULT_PREVIEW_LIMIT)
+        },
+
+        get visibleGroupedUtterances() {
+          return this.showAllTranscriptResults ? this.groupedUtterances : this.groupedUtterances.slice(0, RESULT_PREVIEW_LIMIT)
         },
 
         get totalPages() {
@@ -354,11 +534,93 @@
           }
         },
 
+        openUploadPicker() {
+          if (this.uploading) return
+          this.$refs.uploadInput.value = ''
+          this.$refs.uploadInput.click()
+        },
+
+        showUploadHelp() {
+          this.$refs.uploadHelpDialog.showModal()
+        },
+
+        closeUploadHelp() {
+          this.$refs.uploadHelpDialog.close()
+        },
+
+        selectUploadFile(event) {
+          this.uploadFile = event.target.files?.[0] || null
+          this.uploadFailures = []
+          this.uploadMessage = this.uploadFile ? `Ready to upload ${this.uploadFile.name}` : ''
+          if (this.uploadFile) this.uploadCsv()
+        },
+
+        async uploadCsv() {
+          if (!this.uploadFile || this.uploading) return
+
+          this.uploading = true
+          this.error = null
+          this.uploadFailures = []
+          this.uploadMessage = `Reading ${this.uploadFile.name}...`
+
+          try {
+            const text = await this.uploadFile.text()
+            const records = parseMeetingsCsv(text)
+            if (records.length === 0) {
+              this.uploadMessage = 'No meeting rows found.'
+              return
+            }
+
+            let uploaded = 0
+            let skipped = 0
+            let failed = 0
+
+            for (let index = 0; index < records.length; index++) {
+              const record = records[index]
+              this.uploadMessage = `Uploading ${index + 1} of ${records.length}...`
+              const result = await db.uploadArchive({
+                meeting_id: record.meeting_id,
+                summary: ensureHexPrefix(record.summary),
+                transcript: ensureHexPrefix(record.transcript),
+              })
+
+              if (result.ok && result.skipped) {
+                skipped++
+              } else if (result.ok) {
+                uploaded++
+              } else {
+                failed++
+                this.uploadFailures.push({
+                  row: record.row,
+                  message: result.message || 'Upload failed',
+                })
+              }
+            }
+
+            this.uploadMessage = `Done: ${uploaded} uploaded, ${skipped} skipped, ${failed} failed.`
+            await Promise.all([
+              this.loadLatestMeeting(),
+              this.loadMeetings(),
+            ])
+          } catch (e) {
+            console.error('CSV upload failed:', e)
+            this.uploadMessage = ''
+            this.error = e.message || String(e)
+          } finally {
+            this.uploading = false
+          }
+        },
+
         // ── Search: called on debounced input ───────────────────────────────
         async onSearch() {
           // When query is cleared, reset everything and return to default view
           if (!this.query.trim()) {
             this.utteranceResults = []
+            this.meetingResults = []
+            this.showAllMeetingResults = false
+            this.showAllTranscriptResults = false
+            this.dateFilter = null
+            this.searchCorrections = []
             this.semanticMeetingResults = []
             this.semanticLoading = false
             this.expandedGroups = {}
@@ -372,19 +634,42 @@
           this.loading = true
           this.semanticLoading = true
           this.error = null
+          this.meetingResults = []
           this.utteranceResults = []
+          this.showAllMeetingResults = false
+          this.showAllTranscriptResults = false
+          this.dateFilter = null
+          this.searchCorrections = []
           this.semanticMeetingResults = []
 
           // Fire semantic search independently — it will resolve later without
           // blocking the transcript results from appearing.
           this._runSemantic(this.query, gen)
 
-          // Transcript search (fast — no embedding call)
+          // Keyword searches (fast — no embedding call)
           try {
-            const resp = await db.rpc('search_utterances', { query: this.query })
-            if (resp.error) throw new Error('search_utterances: ' + resp.error.message)
+            const [parseResp, meetingResp, utteranceResp] = await Promise.all([
+              db.rpc('parse_search_query', { query: this.query }),
+              db.rpc('search_meetings', { query: this.query }),
+              db.rpc('search_utterances', { query: this.query }),
+            ])
+            if (parseResp.error) throw new Error('parse_search_query: ' + parseResp.error.message)
+            if (meetingResp.error) throw new Error('search_meetings: ' + meetingResp.error.message)
+            if (utteranceResp.error) throw new Error('search_utterances: ' + utteranceResp.error.message)
             if (gen === this._searchGen) {
-              this.utteranceResults = resp.data || []
+              const meetingResults = meetingResp.data || []
+              const utteranceResults = utteranceResp.data || []
+              this.dateFilter = parseResp.data?.dateFilter || null
+              this.meetingResults = meetingResults
+              this.utteranceResults = utteranceResults
+
+              const correctionResp = await db.rpc('suggest_search_corrections', { query: this.query, limit: 5 })
+              if (gen !== this._searchGen) return
+              if (correctionResp.error) {
+                console.warn('Search correction failed (non-fatal):', correctionResp.error.message)
+              } else {
+                this.searchCorrections = correctionResp.data || []
+              }
             }
           } catch (e) {
             console.error('Transcript search failed:', e)
@@ -416,6 +701,26 @@
           this.expandedGroups[id] = !this.expandedGroups[id]
         },
 
+        removeDateFilter() {
+          if (!this.dateFilter) return
+          const phrase = this.dateFilter.phrase || ''
+          this.query = phrase
+            ? this.query
+                .replace(phrase, ' ')
+                .replace(/\b(?:on|in|during)\s*$/i, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+            : this.query
+          this.dateFilter = null
+          this.onSearch()
+        },
+
+        applySearchCorrection(term) {
+          this.query = term
+          this.searchCorrections = []
+          this.onSearch()
+        },
+
         // ── Helpers ─────────────────────────────────────────────────────────
         formatDate(dateStr) {
           if (!dateStr) return '—'
@@ -427,6 +732,86 @@
         speakerInitial,
         speakerColor,
       }
+    }
+
+    function ensureHexPrefix(value) {
+      return value.startsWith('\\x') ? value : `\\x${value}`
+    }
+
+    function parseMeetingsCsv(text) {
+      const rows = parseCsv(text)
+      if (rows.length === 0) return []
+
+      const header = rows[0].map((value) => value.trim())
+      const required = ['meeting_id', 'summary', 'transcript', 'creation_time']
+      for (let index = 0; index < required.length; index++) {
+        if (header[index] !== required[index]) {
+          throw new Error(`CSV header must start with: ${required.join(', ')}`)
+        }
+      }
+
+      const records = []
+      for (let index = 1; index < rows.length; index++) {
+        const row = rows[index]
+        if (row.every((value) => !value.trim())) continue
+
+        const record = {
+          row: index + 1,
+          meeting_id: (row[0] || '').trim(),
+          summary: (row[1] || '').trim(),
+          transcript: (row[2] || '').trim(),
+        }
+        if (!record.meeting_id) throw new Error(`Row ${record.row}: meeting_id is required`)
+        if (!record.summary) throw new Error(`Row ${record.row}: summary is required`)
+        if (!record.transcript) throw new Error(`Row ${record.row}: transcript is required`)
+        records.push(record)
+      }
+      return records
+    }
+
+    function parseCsv(text) {
+      const rows = []
+      let row = []
+      let field = ''
+      let inQuotes = false
+
+      for (let index = 0; index < text.length; index++) {
+        const char = text[index]
+        const next = text[index + 1]
+
+        if (inQuotes) {
+          if (char === '"' && next === '"') {
+            field += '"'
+            index++
+          } else if (char === '"') {
+            inQuotes = false
+          } else {
+            field += char
+          }
+          continue
+        }
+
+        if (char === '"') {
+          inQuotes = true
+        } else if (char === ',') {
+          row.push(field)
+          field = ''
+        } else if (char === '\n') {
+          row.push(field)
+          rows.push(row)
+          row = []
+          field = ''
+        } else if (char !== '\r') {
+          field += char
+        }
+      }
+
+      if (inQuotes) throw new Error('CSV contains an unterminated quoted field')
+      if (field || row.length > 0) {
+        row.push(field)
+        rows.push(row)
+      }
+      return rows
     }
   </script>
 </body>
